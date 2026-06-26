@@ -117,10 +117,10 @@ async function buildRawChunksContext(
   maxChunks: number,
 ): Promise<{ text: string; meta: Record<string, unknown> }> {
   const { data: sources } = await sb
-    .from("raw_sources").select("id, name").eq("project_id", projectId);
+    .from("raw_sources").select("id, filename").eq("project_id", projectId);
   const sourceIds = (sources ?? []).map((s) => s.id);
   if (sourceIds.length === 0) return { text: "(sem fontes brutas)", meta: { chunks: 0 } };
-  const sourceNameById = new Map((sources ?? []).map((s) => [s.id, s.name]));
+  const sourceNameById = new Map((sources ?? []).map((s) => [s.id, s.filename ?? "?"]));
 
   const { data: chunks } = await sb
     .from("raw_chunks").select("id, content, raw_source_id, position")
