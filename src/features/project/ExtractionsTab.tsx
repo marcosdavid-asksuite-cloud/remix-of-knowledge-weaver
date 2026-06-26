@@ -14,6 +14,7 @@ type FieldRow = {
   field_type?: string;
   confidence?: number;
   source_chunk_ids?: string[];
+  extraction_method?: "regex" | "keyword" | "llm";
 };
 type TopicBlock = {
   topic_slug: string;
@@ -21,6 +22,14 @@ type TopicBlock = {
   core_fields: FieldRow[];
   dynamic_fields: FieldRow[];
   additional_information: Array<{ content: string; source_chunk_ids?: string[] }>;
+};
+type DetStats = {
+  regex_fields: number;
+  keyword_fields: number;
+  llm_fields: number;
+  chunks_skipped_llm: number;
+  chunks_sent_to_llm: number;
+  estimated_llm_calls_saved: number;
 };
 type Preview = {
   topics: TopicBlock[];
@@ -39,9 +48,11 @@ type Preview = {
     classify_alias_hits: number;
     classify_llm_calls: number;
     classify_unmatched: number;
+    deterministic_extraction?: DetStats;
   };
   persisted?: { candidates: number; knowledge_fields: number; knowledge_fields_skipped: number; additional_info: number };
 };
+
 
 const TOPIC_EMOJI: Record<string, string> = {
   breakfast: "☕", checkin: "🛎️", checkout: "🧳", parking: "🚗",
@@ -204,6 +215,7 @@ export function ExtractionsTab({ projectId }: { projectId: string }) {
 }
 
 function StatsGrid({ s }: { s: Preview["statistics"] }) {
+  const det = s.deterministic_extraction;
   const items: Array<[string, string | number]> = [
     ["Chunks processados", `${s.chunks_processed} / ${s.chunks_total}`],
     ["Tópicos com dados", s.topics_with_data],
@@ -217,15 +229,57 @@ function StatsGrid({ s }: { s: Preview["statistics"] }) {
     ["Tempo total", `${(s.latency_ms / 1000).toFixed(2)}s`],
     ["Custo estimado", `~$${s.estimated_cost.toFixed(4)}`],
   ];
+  const detItems: Array<[string, string | number]> = det
+    ? [
+        ["Campos via regex", det.regex_fields],
+        ["Campos via keyword", det.keyword_fields],
+        ["Campos via LLM", det.llm_fields],
+        ["(chunk,tópico) sem LLM", det.chunks_skipped_llm],
+        ["(chunk,tópico) → LLM", det.chunks_sent_to_llm],
+        ["LLM calls economizadas", det.estimated_llm_calls_saved],
+      ]
+    : [];
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-      {items.map(([k, v]) => (
-        <div key={k} className="rounded border p-2">
-          <div className="text-[10px] uppercase text-muted-foreground">{k}</div>
-          <div className="text-sm font-medium">{v}</div>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+        {items.map(([k, v]) => (
+          <div key={k} className="rounded border p-2">
+            <div className="text-[10px] uppercase text-muted-foreground">{k}</div>
+            <div className="text-sm font-medium">{v}</div>
+          </div>
+        ))}
+      </div>
+      {detItems.length > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+            Extração determinística
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {detItems.map(([k, v]) => (
+              <div key={k} className="rounded border border-dashed p-2">
+                <div className="text-[10px] uppercase text-muted-foreground">{k}</div>
+                <div className="text-sm font-medium">{v}</div>
+              </div>
+            ))}
+          </div>
         </div>
-      ))}
+      )}
     </div>
+  );
+}
+
+const METHOD_BADGE: Record<string, { label: string; cls: string }> = {
+  regex: { label: "regex", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
+  keyword: { label: "keyword", cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
+  llm: { label: "llm", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300" },
+};
+
+function MethodBadge({ m }: { m?: string }) {
+  const cfg = METHOD_BADGE[m ?? "llm"] ?? METHOD_BADGE.llm;
+  return (
+    <span className={`inline-flex rounded px-1.5 py-0.5 font-mono text-[10px] ${cfg.cls}`}>
+      {cfg.label}
+    </span>
   );
 }
 
@@ -289,6 +343,7 @@ function FieldGroup({
                   </td>
                 )}
                 <td className="py-1 pr-2">{renderValue(f.field_value)}</td>
+                <td className="py-1 pr-2"><MethodBadge m={f.extraction_method} /></td>
                 <td className="py-1 pr-2 text-right text-muted-foreground">
                   {typeof f.confidence === "number" ? `${(f.confidence * 100).toFixed(0)}%` : ""}
                 </td>

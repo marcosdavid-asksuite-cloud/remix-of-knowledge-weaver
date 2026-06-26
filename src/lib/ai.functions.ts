@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
+import { tryDeterministic, type DpdLite } from "./deterministic-extractors";
+
 
 // --------- Pricing table (rough; per 1M tokens, USD) ----------
 const PRICING: Record<string, { in: number; out: number }> = {
@@ -247,9 +249,8 @@ export const runExtraction = createServerFn({ method: "POST" })
     const defIds = topics.map((t) => t.defId);
     const { data: dpdRaw } = await sb
       .from("data_point_definitions").select("*").in("topic_definition_id", defIds).eq("active", true);
-    const dpdByDefId = new Map<string, Array<{
-      field_name: string; field_label: string; field_type: string; description: string | null;
-    }>>();
+    type DpdFull = DpdLite & { field_label: string; description: string | null };
+    const dpdByDefId = new Map<string, DpdFull[]>();
     for (const d of dpdRaw ?? []) {
       const list = dpdByDefId.get(d.topic_definition_id) ?? [];
       list.push({
@@ -257,9 +258,18 @@ export const runExtraction = createServerFn({ method: "POST" })
         field_label: d.field_label,
         field_type: d.field_type,
         description: d.description,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        extraction_strategy: (d as any).extraction_strategy ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        regex_pattern: (d as any).regex_pattern ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        keywords: (d as any).keywords ?? {},
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        negative_keywords: (d as any).negative_keywords ?? [],
       });
       dpdByDefId.set(d.topic_definition_id, list);
     }
+
 
     // Create the extraction_run row
     const { data: run, error: runErr } = await sb
@@ -276,14 +286,15 @@ export const runExtraction = createServerFn({ method: "POST" })
     if (runErr || !run) throw new Error(runErr?.message ?? "Falha ao criar run");
 
     // Aggregation buckets per topic
+    type ExtractionMethod = "regex" | "keyword" | "llm";
     type TopicAggregate = {
       topic_slug: string;
       topic_name: string;
       topic_def_id: string;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      core_fields: Array<{ field_name: string; field_value: any; confidence?: number; source_chunk_ids: string[] }>;
+      core_fields: Array<{ field_name: string; field_value: any; confidence?: number; source_chunk_ids: string[]; extraction_method: ExtractionMethod }>;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      dynamic_fields: Array<{ field_name: string; field_type: string; field_value: any; confidence?: number; source_chunk_ids: string[] }>;
+      dynamic_fields: Array<{ field_name: string; field_type: string; field_value: any; confidence?: number; source_chunk_ids: string[]; extraction_method: ExtractionMethod }>;
 
       additional_information: Array<{ content: string; source_chunk_ids: string[] }>;
     };
@@ -302,6 +313,16 @@ export const runExtraction = createServerFn({ method: "POST" })
     let totalIn = 0, totalOut = 0, totalCost = 0, totalLatency = 0;
     const chunkTopicMap: Record<string, { matched: string[]; via: "alias" | "llm" | "none" }> = {};
     const classifyCalls = { alias: 0, llm: 0, none: 0 };
+    const detStats = {
+      regex_fields: 0,
+      keyword_fields: 0,
+      llm_fields: 0,
+      chunks_skipped_llm: 0,
+      chunks_sent_to_llm: 0,
+      estimated_llm_calls_saved: 0,
+    };
+    const useLlmForDynamic = (settings as { use_llm_for_dynamic?: boolean }).use_llm_for_dynamic ?? true;
+
 
     try {
       for (const chunk of chunks) {
@@ -331,15 +352,53 @@ export const runExtraction = createServerFn({ method: "POST" })
           const topic = topicBySlug.get(slug);
           if (!topic) continue;
           const dps = dpdByDefId.get(topic.defId) ?? [];
-          const dpBlock = dps.length === 0
-            ? "(nenhum data point oficial — somente dynamic_fields e additional_information)"
-            : dps.map((d) => `- ${d.field_name} (${d.field_type})${d.description ? `: ${d.description}` : ""}`).join("\n");
+          const bucket = agg.get(slug)!;
+
+          // 3a) Deterministic pass on every DPD (regex/keyword/hybrid).
+          const resolvedCore = new Set<string>();
+          for (const d of dps) {
+            const det = tryDeterministic(d, chunk.content);
+            if (det) {
+              bucket.core_fields.push({
+                field_name: d.field_name,
+                field_value: det.value,
+                confidence: 0.95,
+                source_chunk_ids: [chunk.id],
+                extraction_method: det.method,
+              });
+              resolvedCore.add(d.field_name);
+              if (det.method === "regex") detStats.regex_fields++;
+              else detStats.keyword_fields++;
+            }
+          }
+
+          // 3b) Decide if we need LLM at all for this (chunk, topic).
+          const unresolvedDps = dps.filter((d) => !resolvedCore.has(d.field_name));
+          // Strategies that still want LLM when unresolved: 'hybrid' (no det match) or 'llm'.
+          const unresolvedNeedsLLM = unresolvedDps.filter((d) => {
+            const strat = d.extraction_strategy ?? null;
+            if (strat === "regex" || strat === "keyword") return false; // strict — no LLM fallback
+            return true; // hybrid + llm + null(default text/multi_select → llm)
+          });
+          const needLLM = unresolvedNeedsLLM.length > 0 || useLlmForDynamic;
+
+          if (!needLLM) {
+            detStats.chunks_skipped_llm++;
+            detStats.estimated_llm_calls_saved++;
+            continue;
+          }
+          detStats.chunks_sent_to_llm++;
+
+          // 3c) Build prompt — only list DPs the LLM should still try.
+          const llmDpBlock = unresolvedNeedsLLM.length === 0
+            ? "(todos os data points oficiais já foram preenchidos por regra determinística — extraia somente dynamic_fields e additional_information)"
+            : unresolvedNeedsLLM.map((d) => `- ${d.field_name} (${d.field_type})${d.description ? `: ${d.description}` : ""}`).join("\n");
 
           const userPrompt = renderPrompt(settings.extraction_prompt, {
             topic_slug: topic.slug,
             topic_name: topic.name,
             topic_description: topic.description,
-            data_points: dpBlock,
+            data_points: llmDpBlock,
             chunk: chunk.content,
           });
 
@@ -372,39 +431,45 @@ export const runExtraction = createServerFn({ method: "POST" })
             console.error("Parse fail", topic.slug, chunk.id, e);
           }
 
-          const bucket = agg.get(slug)!;
           const allowedCore = new Set(dps.map((d) => d.field_name));
           for (const f of parsed.core_fields) {
             if (allowedCore.size > 0 && !allowedCore.has(f.field_name)) continue;
             if (isEmptyValue(f.field_value)) continue;
+            if (resolvedCore.has(f.field_name)) continue; // deterministic wins
             bucket.core_fields.push({
               field_name: f.field_name,
               field_value: f.field_value,
               confidence: f.confidence,
               source_chunk_ids: [chunk.id],
+              extraction_method: "llm",
             });
+            detStats.llm_fields++;
           }
-          for (const f of parsed.dynamic_fields) {
-            if (isEmptyValue(f.field_value)) continue;
-            // Dynamic fields must NOT collide with core data point names
-            if (allowedCore.has(f.field_name)) continue;
-            bucket.dynamic_fields.push({
-              field_name: f.field_name,
-              field_type: f.field_type,
-              field_value: f.field_value,
-              confidence: f.confidence,
-              source_chunk_ids: [chunk.id],
-            });
-          }
-          for (const text of parsed.additional_information) {
-            const t = (text ?? "").trim();
-            if (!t) continue;
-            bucket.additional_information.push({ content: t, source_chunk_ids: [chunk.id] });
+          if (useLlmForDynamic) {
+            for (const f of parsed.dynamic_fields) {
+              if (isEmptyValue(f.field_value)) continue;
+              if (allowedCore.has(f.field_name)) continue;
+              bucket.dynamic_fields.push({
+                field_name: f.field_name,
+                field_type: f.field_type,
+                field_value: f.field_value,
+                confidence: f.confidence,
+                source_chunk_ids: [chunk.id],
+                extraction_method: "llm",
+              });
+              detStats.llm_fields++;
+            }
+            for (const text of parsed.additional_information) {
+              const t = (text ?? "").trim();
+              if (!t) continue;
+              bucket.additional_information.push({ content: t, source_chunk_ids: [chunk.id] });
+            }
           }
         }
       }
 
       // Build preview shape
+
       const previewTopics = Array.from(agg.values())
         .filter((b) => b.core_fields.length > 0 || b.dynamic_fields.length > 0 || b.additional_information.length > 0)
         .map((b) => ({
@@ -433,7 +498,9 @@ export const runExtraction = createServerFn({ method: "POST" })
         classify_alias_hits: classifyCalls.alias,
         classify_llm_calls: classifyCalls.llm,
         classify_unmatched: classifyCalls.none,
+        deterministic_extraction: detStats,
       };
+
 
       // ---- Persist mode: write candidates + dedupe into knowledge_fields/additional_info ----
       let persisted = { candidates: 0, knowledge_fields: 0, knowledge_fields_skipped: 0, additional_info: 0 };
@@ -469,8 +536,10 @@ export const runExtraction = createServerFn({ method: "POST" })
               confidence: f.confidence ?? null,
               source_chunk_ids: f.source_chunk_ids as never,
               status: "pending",
-            });
+              extraction_method: f.extraction_method,
+            } as never);
             persisted.candidates++;
+
 
             const key = `${f.field_name}|${canonicalValue(f.field_value)}`;
             const existingRow = existingMap.get(key);

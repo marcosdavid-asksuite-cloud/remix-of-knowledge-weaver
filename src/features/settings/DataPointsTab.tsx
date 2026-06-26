@@ -31,6 +31,9 @@ const FIELD_TYPES = [
 ] as const;
 type FieldType = (typeof FIELD_TYPES)[number];
 
+const STRATEGIES = ["regex", "keyword", "hybrid", "llm"] as const;
+type Strategy = (typeof STRATEGIES)[number];
+
 type Dpd = {
   id: string;
   topic_definition_id: string;
@@ -40,6 +43,10 @@ type Dpd = {
   description: string | null;
   required: boolean;
   active: boolean;
+  extraction_strategy: Strategy;
+  regex_pattern: string | null;
+  keywords: unknown;
+  negative_keywords: unknown;
 };
 
 const TOPIC_EMOJI: Record<string, string> = {
@@ -167,6 +174,7 @@ export function DataPointsTab() {
                   <th className="py-2 pr-3">Label</th>
                   <th className="py-2 pr-3">Field</th>
                   <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Strategy</th>
                   <th className="py-2 pr-3">Required</th>
                   <th className="py-2 pr-3">Active</th>
                   <th></th>
@@ -182,6 +190,11 @@ export function DataPointsTab() {
                     <td className="py-2 pr-3">
                       <Badge variant="secondary" className="text-[10px]">
                         {d.field_type}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Badge variant="outline" className="text-[10px]">
+                        {d.extraction_strategy}
                       </Badge>
                     </td>
                     <td className="py-2 pr-3">
@@ -264,6 +277,14 @@ function EditDialog({
   const [description, setDescription] = useState(existing?.description ?? "");
   const [required, setRequired] = useState(existing?.required ?? false);
   const [active, setActive] = useState(existing?.active ?? true);
+  const [strategy, setStrategy] = useState<Strategy>(existing?.extraction_strategy ?? "llm");
+  const [regexPattern, setRegexPattern] = useState(existing?.regex_pattern ?? "");
+  const [keywordsJson, setKeywordsJson] = useState(
+    existing?.keywords ? JSON.stringify(existing.keywords, null, 2) : "{}",
+  );
+  const [negativeJson, setNegativeJson] = useState(
+    existing?.negative_keywords ? JSON.stringify(existing.negative_keywords, null, 2) : "[]",
+  );
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -271,6 +292,12 @@ function EditDialog({
       toast.error("Preencha field name e label");
       return;
     }
+    let keywordsParsed: unknown = {};
+    let negativeParsed: unknown = [];
+    try { keywordsParsed = JSON.parse(keywordsJson || "{}"); }
+    catch { toast.error("Keywords não é JSON válido"); return; }
+    try { negativeParsed = JSON.parse(negativeJson || "[]"); }
+    catch { toast.error("Negative keywords não é JSON válido"); return; }
     setSaving(true);
     const payload = {
       topic_definition_id: topicId,
@@ -280,13 +307,17 @@ function EditDialog({
       description: description.trim() || null,
       required,
       active,
+      extraction_strategy: strategy,
+      regex_pattern: regexPattern.trim() || null,
+      keywords: keywordsParsed,
+      negative_keywords: negativeParsed,
     };
     const { error } = existing
       ? await supabase
           .from("data_point_definitions")
-          .update(payload)
+          .update(payload as never)
           .eq("id", existing.id)
-      : await supabase.from("data_point_definitions").insert(payload);
+      : await supabase.from("data_point_definitions").insert(payload as never);
     setSaving(false);
     if (error) {
       toast.error(error.message);
@@ -338,6 +369,59 @@ function EditDialog({
               ))}
             </select>
           </div>
+          <div>
+            <Label>Estratégia de extração</Label>
+            <select
+              className="w-full rounded border bg-background p-2 text-sm"
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value as Strategy)}
+            >
+              {STRATEGIES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              regex / keyword: nunca chama LLM se resolver. hybrid: tenta determinístico e cai p/ LLM. llm: sempre LLM.
+            </p>
+          </div>
+          {(strategy === "regex" || strategy === "hybrid") && (
+            <div>
+              <Label>Regex pattern (opcional)</Label>
+              <Input
+                placeholder="ex.: \\b(\\d{1,2})[:h](\\d{2})?\\b"
+                value={regexPattern}
+                onChange={(e) => setRegexPattern(e.target.value)}
+                className="font-mono text-xs"
+              />
+            </div>
+          )}
+          {(strategy === "keyword" || strategy === "hybrid") && (
+            <>
+              <div>
+                <Label>Keywords (JSON)</Label>
+                <Textarea
+                  rows={4}
+                  className="font-mono text-xs"
+                  value={keywordsJson}
+                  onChange={(e) => setKeywordsJson(e.target.value)}
+                  placeholder='{"allowed":["aceita pets","pet friendly"],"not_allowed":["não aceita pets"]}'
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Boolean: {"{ positive: [...], negative: [...] }"}. Enum: {"{ value: [...] }"}.
+                </p>
+              </div>
+              <div>
+                <Label>Negative keywords (JSON array)</Label>
+                <Textarea
+                  rows={2}
+                  className="font-mono text-xs"
+                  value={negativeJson}
+                  onChange={(e) => setNegativeJson(e.target.value)}
+                  placeholder='["não","sem","proibido"]'
+                />
+              </div>
+            </>
+          )}
           <div>
             <Label>Descrição</Label>
             <Textarea
