@@ -219,6 +219,9 @@ export const runBenchmark = createServerFn({ method: "POST" })
     const sb = getSb();
     if (data.modes.length === 0) throw new Error("Selecione ao menos um modo.");
     if (data.questionIds.length === 0) throw new Error("Selecione ao menos uma pergunta.");
+    if (data.modes.includes("external_agent") && !data.externalAgentId) {
+      throw new Error("Selecione um External Agent para o modo external_agent.");
+    }
 
     // Resolve model config (active) — let user override model + temperature.
     const { data: modelCfg } = await sb
@@ -229,6 +232,20 @@ export const runBenchmark = createServerFn({ method: "POST" })
     const temperature = data.temperature ?? Number(modelCfg.temperature);
     const maxRawChunks = Math.max(1, Math.min(80, data.maxRawChunks ?? 20));
     const includeAdditional = data.includeAdditional ?? true;
+
+    // Load external agent if needed
+    let externalAgent: {
+      id: string; name: string; endpoint: string; auth_type: string;
+      auth_header_name: string | null; api_key: string | null;
+      custom_headers: Record<string, string>; model: string | null;
+      temperature: number | null; timeout_ms: number | null;
+      payload_template: unknown; response_path: string | null;
+      context_options: { structured?: boolean; additional?: boolean; raw_chunks?: boolean };
+    } | null = null;
+    if (data.externalAgentId) {
+      const { data: ea } = await sb.from("external_agents").select("*").eq("id", data.externalAgentId).maybeSingle();
+      if (ea) externalAgent = ea as never;
+    }
 
     // Topics for the project.
     const { data: topicsRaw } = await sb
