@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
-import { tryDeterministic, type DpdLite } from "./deterministic-extractors";
+import { tryDeterministic, extractTimeRange, type DpdLite } from "./deterministic-extractors";
 
 
 // --------- Pricing table (rough; per 1M tokens, USD) ----------
@@ -766,8 +766,25 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       const useChunks = classified.slice(0, CHUNK_CAP);
       const usedChunkIds = useChunks.map((c) => c.id);
 
-      // Deterministic pass — first-match wins.
+      // ---- Pair pass: handle *_start_time / *_end_time atomically ----
+      // (a single regex match would otherwise fill BOTH fields with the same first time)
       const coreValues = new Map<string, { value: unknown; chunkId: string }>();
+      const timeStarts = dps.filter((d) => d.field_type === "time" && /(_start_time|_start|_inicio|_inicio_time)$/.test(d.field_name));
+      for (const startDpd of timeStarts) {
+        const base = startDpd.field_name.replace(/(_start_time|_start|_inicio|_inicio_time)$/, "");
+        const endDpd = dps.find((d) => d.field_type === "time" && (d.field_name === `${base}_end_time` || d.field_name === `${base}_end` || d.field_name === `${base}_fim` || d.field_name === `${base}_fim_time`));
+        if (!endDpd) continue;
+        for (const c of useChunks) {
+          const range = extractTimeRange(c.content);
+          if (range) {
+            if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
+            if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
+            break;
+          }
+        }
+      }
+
+      // Per-field deterministic pass — first-match wins.
       for (const c of useChunks) {
         for (const d of dps) {
           if (coreValues.has(d.field_name)) continue;
@@ -789,8 +806,19 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         ? "(todos os campos oficiais já foram preenchidos pela camada determinística)"
         : unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
 
-      const sys = "Você extrai informações estruturadas de textos de hotéis. Responda APENAS com JSON válido. Não invente nada que não esteja no texto. Quando não souber o valor de um campo, omita-o. Para informações úteis que não cabem nos campos oficiais, junte-as em 'additional_info' como texto narrativo bem escrito em português.";
-      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR:\n${dpList}\n\nTEXTOS DISPONÍVEIS (todos referem-se a este tópico):\n${combinedText}\n\nResponda com JSON no formato:\n{\n  "core_fields": { "field_name_1": valor, ... },\n  "additional_info": "texto narrativo opcional com info relevante que não cabe em core_fields (ex.: itens do café, observações). Pode ser vazio."\n}`;
+
+      const sys = [
+        "Você extrai informações estruturadas de textos de hotéis em pt-BR. Responda APENAS com JSON válido.",
+        "REGRAS:",
+        "1. Use SOMENTE informações presentes nos textos. Não invente nada.",
+        "2. Sempre prefira preencher os campos oficiais (core_fields). Só coloque algo em additional_info se NÃO COUBER em nenhum campo.",
+        "3. Campos de horário (field_type=time) devem vir no formato HH:MM (24h). Ex.: '07h' → '07:00', '10h30' → '10:30'.",
+        "4. Quando o texto trouxer um INTERVALO como '07h às 10h', '6:30 até 10h', 'das 7 às 10', preencha o par *_start_time/*_end_time com os DOIS horários (não use o mesmo valor para os dois).",
+        "5. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
+        "6. Campos de texto curtos (ex.: location, name): apenas o trecho factual. Detalhes acessórios (visão, andar bonito, observações) vão em additional_info.",
+        "7. Omita o campo do JSON quando não souber o valor.",
+      ].join("\n");
+      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível):\n${dpList}\n\nTEXTOS DISPONÍVEIS (todos referem-se a este tópico):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields (itens do buffet, observações, restrições, etc.). Pode ficar vazia."\n}`;
 
       try {
         const res = await callGateway({
