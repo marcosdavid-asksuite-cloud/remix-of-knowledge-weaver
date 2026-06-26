@@ -40,15 +40,19 @@ export type DynamicAggregate = {
 };
 
 export const analyzeDynamicFields = createServerFn({ method: "POST" })
-  .handler(async (): Promise<{ aggregates: DynamicAggregate[]; created: number }> => {
+  .handler(async () => {
     const sb = getSb();
 
-    // Pull all dynamic candidates (and joined topic / project for grouping)
     const { data: cands, error } = await sb
       .from("knowledge_candidates")
-      .select("id, project_id, topic_slug, field_name, field_value, field_type, confidence, field_origin, status")
+      .select("id, project_id, topic_definition_id, field_name, field_value, field_type, confidence, field_origin, status")
       .eq("field_origin", "dynamic");
     if (error) throw new Error(error.message);
+
+    // Topic definitions map (id <-> slug)
+    const { data: tds } = await sb.from("topic_definitions").select("id, slug");
+    const slugById = new Map<string, string>((tds ?? []).map((t) => [t.id, t.slug]));
+    const tdBySlug = new Map<string, string>((tds ?? []).map((t) => [t.slug, t.id]));
 
     // Existing official data points (per topic)
     const { data: dpds } = await sb
@@ -59,10 +63,6 @@ export const analyzeDynamicFields = createServerFn({ method: "POST" })
       const slug = (d as { topic_definitions: { slug: string } | null }).topic_definitions?.slug;
       if (slug) officialByTopic.add(`${slug}::${normalizeName(d.field_name)}`);
     }
-
-    // Topic definitions map
-    const { data: tds } = await sb.from("topic_definitions").select("id, slug");
-    const tdBySlug = new Map<string, string>((tds ?? []).map((t) => [t.slug, t.id]));
 
     // Existing suggestions
     const { data: existingSugg } = await sb
@@ -75,7 +75,6 @@ export const analyzeDynamicFields = createServerFn({ method: "POST" })
       });
     }
 
-    // Group
     type Group = {
       topic_slug: string;
       field_name: string;
@@ -88,20 +87,17 @@ export const analyzeDynamicFields = createServerFn({ method: "POST" })
     };
     const groups = new Map<string, Group>();
     for (const c of cands ?? []) {
+      const slug = slugById.get(c.topic_definition_id);
+      if (!slug) continue;
       const fn = normalizeName(c.field_name ?? "");
       if (!fn) continue;
-      const key = `${c.topic_slug}::${fn}`;
+      const key = `${slug}::${fn}`;
       let g = groups.get(key);
       if (!g) {
         g = {
-          topic_slug: c.topic_slug,
-          field_name: fn,
-          type_counts: new Map(),
-          project_ids: new Set(),
-          confidences: [],
-          examples: [],
-          consolidated: 0,
-          occurrences: 0,
+          topic_slug: slug, field_name: fn, type_counts: new Map(),
+          project_ids: new Set(), confidences: [], examples: [],
+          consolidated: 0, occurrences: 0,
         };
         groups.set(key, g);
       }
@@ -109,7 +105,7 @@ export const analyzeDynamicFields = createServerFn({ method: "POST" })
       g.project_ids.add(c.project_id);
       g.type_counts.set(c.field_type, (g.type_counts.get(c.field_type) ?? 0) + 1);
       if (typeof c.confidence === "number") g.confidences.push(c.confidence);
-      if (g.examples.length < 5) g.examples.push(c.field_value);
+      if (g.examples.length < 5) g.examples.push(c.field_value as unknown);
       if (c.status === "approved" || c.status === "consolidated") g.consolidated++;
     }
 
