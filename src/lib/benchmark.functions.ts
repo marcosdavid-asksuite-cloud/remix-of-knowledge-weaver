@@ -203,6 +203,93 @@ async function buildStructuredContext(
   };
 }
 
+type ExternalAgentRow = {
+  id: string; name: string; endpoint: string; auth_type: string;
+  auth_header_name: string | null; api_key: string | null;
+  custom_headers: Record<string, string> | null; model: string | null;
+  temperature: number | null; timeout_ms: number | null;
+  payload_template: unknown; response_path: string | null;
+  context_options: { structured?: boolean; additional?: boolean; raw_chunks?: boolean } | null;
+};
+
+function getByPath(obj: unknown, path: string): unknown {
+  if (!path) return obj;
+  return path.split(".").reduce<unknown>((acc, key) => {
+    if (acc == null) return undefined;
+    const k = /^\d+$/.test(key) ? Number(key) : key;
+    return (acc as Record<string | number, unknown>)[k];
+  }, obj);
+}
+
+async function callExternalAgentInline(
+  agent: ExternalAgentRow,
+  question: string,
+  context: string,
+): Promise<{ content: string; inputTokens: number | null; outputTokens: number | null; latency: number; requestPayload: unknown }> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(agent.custom_headers ?? {}),
+  };
+  if (agent.auth_type === "bearer" && agent.api_key) headers["Authorization"] = `Bearer ${agent.api_key}`;
+  else if (agent.auth_type === "header" && agent.auth_header_name && agent.api_key) headers[agent.auth_header_name] = agent.api_key;
+
+  const system = "Responda somente com base no contexto fornecido. Não invente.";
+  const userContent = `Pergunta:\n${question}\n\nContexto:\n${context}`;
+
+  let payload: unknown;
+  if (agent.payload_template) {
+    const tpl = JSON.stringify(agent.payload_template);
+    payload = JSON.parse(
+      tpl
+        .replace(/\{\{question\}\}/g, JSON.stringify(question).slice(1, -1))
+        .replace(/\{\{context\}\}/g, JSON.stringify(context).slice(1, -1))
+        .replace(/\{\{system\}\}/g, JSON.stringify(system).slice(1, -1))
+        .replace(/\{\{model\}\}/g, agent.model ?? "")
+        .replace(/\{\{temperature\}\}/g, String(agent.temperature ?? 0.2)),
+    );
+  } else {
+    payload = {
+      model: agent.model,
+      temperature: Number(agent.temperature ?? 0.2),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+    };
+  }
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), agent.timeout_ms ?? 30000);
+  const t0 = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(agent.endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
+  const latency = Date.now() - t0;
+  const text = await res.text();
+  let json: unknown;
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok) throw new Error(`Agente externo ${res.status}: ${text.slice(0, 300)}`);
+  const path = agent.response_path ?? "choices.0.message.content";
+  const extracted = getByPath(json, path);
+  const content = typeof extracted === "string" ? extracted : JSON.stringify(extracted ?? json).slice(0, 4000);
+  const usage = (json as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
+  return {
+    content,
+    inputTokens: usage?.prompt_tokens ?? null,
+    outputTokens: usage?.completion_tokens ?? null,
+    latency,
+    requestPayload: payload,
+  };
+}
+
 export const runBenchmark = createServerFn({ method: "POST" })
   .inputValidator((input: {
     projectId: string;
