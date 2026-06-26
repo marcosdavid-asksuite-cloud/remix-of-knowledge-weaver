@@ -315,7 +315,8 @@ export const runBenchmark = createServerFn({ method: "POST" })
               context = await buildStructuredContext(sb, useTopics, false);
             } else {
               // external_agent — build context based on agent options
-              const co = (externalAgent?.context_options ?? {}) as { structured?: boolean; additional?: boolean; raw_chunks?: boolean };
+              const agent = externalAgent as { context_options: { structured?: boolean; additional?: boolean; raw_chunks?: boolean } } | null;
+              const co = agent?.context_options ?? {};
               const parts: string[] = [];
               const meta: Record<string, unknown> = {};
               if (co.structured !== false) {
