@@ -206,18 +206,44 @@ async function buildRawContext(
 async function buildStructuredContext(
   sb: ReturnType<typeof getSb>,
   projectId: string,
-): Promise<{ text: string; fieldsUsed: number; topicsUsed: number }> {
+  question: string,
+): Promise<{ text: string; fieldsUsed: number; topicsUsed: number; matchedTopics: string[] }> {
   const { data: topics } = await sb
     .from("topics")
-    .select("id, topic_definitions(slug, name)")
+    .select("id, topic_definitions(slug, name, aliases)")
     .eq("project_id", projectId);
   const topicList = (topics ?? []) as unknown as Array<{
     id: string;
-    topic_definitions: { slug: string; name: string } | null;
+    topic_definitions: { slug: string; name: string; aliases: string[] | null } | null;
   }>;
-  if (topicList.length === 0) return { text: "(sem tópicos)", fieldsUsed: 0, topicsUsed: 0 };
+  if (topicList.length === 0) return { text: "(sem tópicos)", fieldsUsed: 0, topicsUsed: 0, matchedTopics: [] };
 
-  const topicIds = topicList.map((t) => t.id);
+  // Topic relevance filter — match question against slug/name/aliases.
+  const qNorm = normalizeText(question);
+  const qTokens = qNorm.replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
+  const scoredTopics = topicList.map((t) => {
+    const def = t.topic_definitions;
+    const terms = [def?.slug, def?.name, ...(def?.aliases ?? [])]
+      .filter(Boolean)
+      .map((s) => normalizeText(String(s)));
+    let score = 0;
+    for (const term of terms) {
+      if (!term) continue;
+      if (qNorm.includes(term)) score += term.length >= 5 ? 3 : 2;
+      else {
+        for (const tok of qTokens) {
+          if (tok.length >= 4 && term.includes(tok)) score += 1;
+        }
+      }
+    }
+    return { t, score };
+  });
+  let relevant = scoredTopics.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
+  if (relevant.length === 0) relevant = scoredTopics.slice(0, 3);
+  relevant = relevant.slice(0, 5);
+  const selectedTopics = relevant.map((r) => r.t);
+  const topicIds = selectedTopics.map((t) => t.id);
+
   const { data: fields } = await sb
     .from("knowledge_fields").select("topic_id, field_name, field_value, field_origin")
     .in("topic_id", topicIds)
@@ -233,7 +259,8 @@ async function buildStructuredContext(
   };
   const payloads: Payload[] = [];
   let totalFields = 0;
-  for (const t of topicList) {
+  const matchedSlugs: string[] = [];
+  for (const t of selectedTopics) {
     const slug = t.topic_definitions?.slug ?? "?";
     const tFields = (fields ?? []).filter((f) => f.topic_id === t.id);
     const tAddl = (addl ?? []).filter((a) => a.topic_id === t.id);
@@ -243,7 +270,6 @@ async function buildStructuredContext(
       core[f.field_name] = f.field_value;
       totalFields++;
     }
-    // dynamic fields fold into additional_information text if no curated addl present
     const dynamicTexts = tFields
       .filter((f) => f.field_origin === "dynamic")
       .map((f) => {
@@ -253,14 +279,16 @@ async function buildStructuredContext(
     totalFields += dynamicTexts.length;
     const addlText = [...tAddl.map((a) => a.content), ...dynamicTexts].join("\n");
     payloads.push({ topic: slug, core_fields: core, additional_information: addlText });
+    matchedSlugs.push(slug);
   }
   if (payloads.length === 0) {
-    return { text: "(base estruturada vazia)", fieldsUsed: 0, topicsUsed: 0 };
+    return { text: "(nenhum tópico relevante encontrado)", fieldsUsed: 0, topicsUsed: 0, matchedTopics: [] };
   }
   return {
     text: JSON.stringify(payloads, null, 2),
     fieldsUsed: totalFields,
     topicsUsed: payloads.length,
+    matchedTopics: matchedSlugs,
   };
 }
 
