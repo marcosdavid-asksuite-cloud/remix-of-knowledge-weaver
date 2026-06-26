@@ -468,9 +468,8 @@ export const runExtraction = createServerFn({ method: "POST" })
         }
       }
 
-      }
-
       // Build preview shape
+
       const previewTopics = Array.from(agg.values())
         .filter((b) => b.core_fields.length > 0 || b.dynamic_fields.length > 0 || b.additional_information.length > 0)
         .map((b) => ({
