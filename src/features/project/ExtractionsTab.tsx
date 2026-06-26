@@ -14,6 +14,7 @@ type FieldRow = {
   field_type?: string;
   confidence?: number;
   source_chunk_ids?: string[];
+  extraction_method?: "regex" | "keyword" | "llm";
 };
 type TopicBlock = {
   topic_slug: string;
@@ -21,6 +22,14 @@ type TopicBlock = {
   core_fields: FieldRow[];
   dynamic_fields: FieldRow[];
   additional_information: Array<{ content: string; source_chunk_ids?: string[] }>;
+};
+type DetStats = {
+  regex_fields: number;
+  keyword_fields: number;
+  llm_fields: number;
+  chunks_skipped_llm: number;
+  chunks_sent_to_llm: number;
+  estimated_llm_calls_saved: number;
 };
 type Preview = {
   topics: TopicBlock[];
@@ -39,9 +48,11 @@ type Preview = {
     classify_alias_hits: number;
     classify_llm_calls: number;
     classify_unmatched: number;
+    deterministic_extraction?: DetStats;
   };
   persisted?: { candidates: number; knowledge_fields: number; knowledge_fields_skipped: number; additional_info: number };
 };
+
 
 const TOPIC_EMOJI: Record<string, string> = {
   breakfast: "☕", checkin: "🛎️", checkout: "🧳", parking: "🚗",
