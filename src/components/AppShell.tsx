@@ -15,9 +15,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Link to="/" className="text-muted-foreground hover:text-foreground" activeProps={{ className: "text-foreground" }}>
               Projects
             </Link>
-            <Link to="/settings" className="text-muted-foreground hover:text-foreground" activeProps={{ className: "text-foreground" }}>
-              Settings
-            </Link>
           </nav>
         </div>
       </header>

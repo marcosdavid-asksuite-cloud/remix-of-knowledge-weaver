@@ -3,37 +3,26 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { AppShell } from "@/components/AppShell";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { SourcesTab } from "@/features/project/SourcesTab";
-import { TopicsTab } from "@/features/project/TopicsTab";
-import { KnowledgeTab } from "@/features/project/KnowledgeTab";
-import { ExtractionsTab } from "@/features/project/ExtractionsTab";
-import { ConsolidationTab } from "@/features/project/ConsolidationTab";
-import { QuestionsTab } from "@/features/project/QuestionsTab";
-import { PlaygroundTab } from "@/features/project/PlaygroundTab";
-import { BenchmarkTab } from "@/features/project/BenchmarkTab";
-import { HealthTab } from "@/features/project/HealthTab";
-import { ExtractionAnalyticsTab } from "@/features/project/ExtractionAnalyticsTab";
-import { ExecutiveReportTab } from "@/features/project/ExecutiveReportTab";
-import { ExternalAgentTab } from "@/features/project/ExternalAgentTab";
-import { LabSettingsTab } from "@/features/project/LabSettingsTab";
-import { SnapshotsTab } from "@/features/project/SnapshotsTab";
-import { ProjectSummaryCards } from "@/features/project/ProjectSummaryCards";
+import { UploadTab } from "@/features/project/UploadTab";
+import { RawKnowledgeTab } from "@/features/project/RawKnowledgeTab";
+import { StructuredKnowledgeTab } from "@/features/project/StructuredKnowledgeTab";
+import { CompareResponsesTab } from "@/features/project/CompareResponsesTab";
+import { SettingsTab } from "@/features/project/SettingsTab";
 import { Button } from "@/components/ui/button";
 
-type Search = { tab?: string; topic?: string };
+type Search = { tab?: string };
 
 export const Route = createFileRoute("/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project — Hybrid KB Lab" }] }),
   validateSearch: (s: Record<string, unknown>): Search => ({
     tab: typeof s.tab === "string" ? s.tab : undefined,
-    topic: typeof s.topic === "string" ? s.topic : undefined,
   }),
   component: ProjectDetail,
 });
 
 function ProjectDetail() {
   const { projectId } = Route.useParams();
-  const { tab, topic } = Route.useSearch();
+  const { tab } = Route.useSearch();
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
     queryFn: async () => {
@@ -54,51 +43,28 @@ function ProjectDetail() {
 
   return (
     <AppShell>
-      <div className="mb-6 flex items-end justify-between">
-        <div>
-          <Link to="/" className="text-xs text-muted-foreground hover:text-foreground">← Projects</Link>
-          <h1 className="mt-1 text-2xl font-semibold">{project.name}</h1>
-          {project.description && (
-            <p className="text-sm text-muted-foreground">{project.description}</p>
-          )}
-        </div>
+      <div className="mb-6">
+        <Link to="/" className="text-xs text-muted-foreground hover:text-foreground">← Projects</Link>
+        <h1 className="mt-1 text-2xl font-semibold">{project.name}</h1>
+        {project.description && (
+          <p className="text-sm text-muted-foreground">{project.description}</p>
+        )}
       </div>
 
-      <div className="mb-6"><ProjectSummaryCards projectId={projectId} /></div>
-
-      <Tabs defaultValue={tab ?? "sources"}>
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="sources">Sources</TabsTrigger>
-          <TabsTrigger value="topics">Topics</TabsTrigger>
-          <TabsTrigger value="extractions">Extractions</TabsTrigger>
-          <TabsTrigger value="consolidation">Consolidation</TabsTrigger>
-          <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
-          <TabsTrigger value="questions">Questions</TabsTrigger>
-          <TabsTrigger value="playground">Playground</TabsTrigger>
-          <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
-          <TabsTrigger value="external-agent">External Agent</TabsTrigger>
-          <TabsTrigger value="health">Health</TabsTrigger>
-          <TabsTrigger value="analytics">Extraction Analytics</TabsTrigger>
-          <TabsTrigger value="report">Executive Report</TabsTrigger>
-          <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
-          <TabsTrigger value="lab">Lab Settings</TabsTrigger>
+      <Tabs defaultValue={tab ?? "upload"}>
+        <TabsList>
+          <TabsTrigger value="upload">Upload</TabsTrigger>
+          <TabsTrigger value="raw">Raw Knowledge</TabsTrigger>
+          <TabsTrigger value="structured">Structured Knowledge</TabsTrigger>
+          <TabsTrigger value="compare">Compare Responses</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
-        <TabsContent value="sources" className="mt-6"><SourcesTab projectId={projectId} /></TabsContent>
-        <TabsContent value="topics" className="mt-6"><TopicsTab projectId={projectId} /></TabsContent>
-        <TabsContent value="extractions" className="mt-6"><ExtractionsTab projectId={projectId} /></TabsContent>
-        <TabsContent value="consolidation" className="mt-6"><ConsolidationTab projectId={projectId} /></TabsContent>
-        <TabsContent value="knowledge" className="mt-6"><KnowledgeTab projectId={projectId} /></TabsContent>
-        <TabsContent value="questions" className="mt-6"><QuestionsTab projectId={projectId} /></TabsContent>
-        <TabsContent value="playground" className="mt-6"><PlaygroundTab projectId={projectId} /></TabsContent>
-        <TabsContent value="benchmark" className="mt-6"><BenchmarkTab projectId={projectId} /></TabsContent>
-        <TabsContent value="external-agent" className="mt-6"><ExternalAgentTab projectId={projectId} /></TabsContent>
-        <TabsContent value="health" className="mt-6"><HealthTab projectId={projectId} /></TabsContent>
-        <TabsContent value="analytics" className="mt-6"><ExtractionAnalyticsTab projectId={projectId} initialTopicSlug={topic} /></TabsContent>
-        <TabsContent value="report" className="mt-6"><ExecutiveReportTab projectId={projectId} /></TabsContent>
-        <TabsContent value="snapshots" className="mt-6"><SnapshotsTab projectId={projectId} /></TabsContent>
-        <TabsContent value="lab" className="mt-6"><LabSettingsTab projectId={projectId} /></TabsContent>
+        <TabsContent value="upload" className="mt-6"><UploadTab projectId={projectId} /></TabsContent>
+        <TabsContent value="raw" className="mt-6"><RawKnowledgeTab projectId={projectId} /></TabsContent>
+        <TabsContent value="structured" className="mt-6"><StructuredKnowledgeTab projectId={projectId} /></TabsContent>
+        <TabsContent value="compare" className="mt-6"><CompareResponsesTab projectId={projectId} /></TabsContent>
+        <TabsContent value="settings" className="mt-6"><SettingsTab /></TabsContent>
       </Tabs>
     </AppShell>
   );
 }
-
