@@ -1,95 +1,163 @@
-
 ## Objetivo
-Transformar `KnowledgeCandidates` (fatos extraídos brutos) em uma base oficial confiável de `KnowledgeFields` consolidados, com gestão explícita de conflitos e aprovação manual. A base usada pelo Playground passa a vir só de fatos consolidados/aprovados.
 
-## 1. Migrações de banco
+Transformar o Hybrid KB Lab em um MVP focado em uma única hipótese: **base híbrida estruturada vs. RAG bruto produz respostas melhores?**
 
-### 1.1 Nova tabela `knowledge_conflicts`
-Colunas: `id`, `project_id` (FK projects), `topic_definition_id` (FK), `field_name`, `field_type`, `conflict_type` (`different_values | contradictory_boolean | different_time | different_price | duplicate_uncertain`), `status` (`pending | resolved | ignored`, default `pending`), `candidate_ids uuid[]`, `selected_candidate_id` (FK knowledge_candidates, null), `manual_value jsonb`, `resolution_note text`, `created_at`, `resolved_at`.
-GRANT padrão (anon RW por ser laboratório, mesmo padrão das demais tabelas) + RLS allow-all. Trigger `update_updated_at_column` não se aplica (sem `updated_at`).
+Toda a lógica de backend (pipeline de extração, regex/keyword/LLM, data points, dynamic fields, consolidação, etc.) é **preservada**. O refactor é majoritariamente de **interface e fluxo**.
 
-### 1.2 Alterações em `knowledge_fields`
-Adicionar: `source_of_truth text` (default `auto_single_candidate`, CHECK em 5 valores), `consolidation_status text` (default `consolidated`, CHECK em `consolidated|needs_review`), `approved_by_user boolean default false`, `approved_at timestamptz`, `candidate_ids uuid[] default '{}'`.
+---
 
-### 1.3 Alterações em `additional_info`
-Adicionar: `status text` (default `pending`, CHECK em `pending|approved|rejected`), `approved_at timestamptz`. Persist da extração passa a inserir como `pending`.
+## Nova navegação (5 telas)
 
-### 1.4 Alterações em `knowledge_candidates`
-Garantir que o `status` aceite `pending|approved|rejected|superseded`. Acrescentar `field_type` se já não existir (necessário para conflict_type).
+```text
+Upload  →  Raw Knowledge  →  Structured Knowledge  →  Compare Responses  →  Settings
+```
 
-## 2. Lib de normalização (`src/lib/value-normalizer.ts`)
-Função `normalizeValue(fieldType, value)` retornando string canônica usada como chave de agrupamento. Reusa `extractTime`/`extractCurrency`/keywords booleanos. Casos:
-- `time` → `HH:mm`
-- `time_range` → `HH:mm-HH:mm`
-- `currency` → `BRL:50.00`
-- `number` → toString sem espaços
-- `boolean` → `true`/`false` (mapeia "sim", "possui", "não", etc.)
-- `text` / outros → trim, lowercase, collapse spaces
-Também export `chooseConflictType(fieldType)`.
+Remover das tabs do projeto: Topics, Extractions, Consolidation, Knowledge (antiga), Questions, Playground, Benchmark, External Agent, Health, Extraction Analytics, Executive Report, Snapshots, Lab Settings.
 
-## 3. Server function `consolidateKnowledge` (`src/lib/consolidation.functions.ts`)
-`createServerFn({ method:'POST' })` recebendo `{ projectId }`. Algoritmo:
-1. Carrega candidates do projeto com status `pending` ou `approved` (não `rejected`/`superseded`).
-2. Agrupa por `(topic_definition_id, field_name)`.
-3. Para cada grupo, normaliza cada candidato e agrupa por valor canônico.
-4. **Caso A/B**: um único valor canônico → upsert em `knowledge_fields` (match em `project_id+topic_id+field_name`):
-   - `field_value` = valor original do candidato de maior confidence.
-   - `source_chunk_ids` = união.
-   - `candidate_ids` = união.
-   - `confidence` = máximo.
-   - `source_of_truth` = `auto_single_candidate` (1 candidato) ou `auto_merged_candidates` (>1).
-   - `consolidation_status` = `consolidated`.
-   - Marca candidates `approved`.
-   - Se houver conflito anterior resolvido para esse field, mantém; se pendente, deixa.
-5. **Caso C**: mais de um valor canônico → não toca o `knowledge_field`, cria/atualiza um `knowledge_conflicts` `pending` (`conflict_type` via `chooseConflictType`). Candidates permanecem `pending`.
-6. Limpa conflitos `pending` que deixaram de existir (ex.: rejeições posteriores).
-7. Retorna estatísticas: `consolidated_fields`, `merged_fields`, `new_conflicts`, `resolved_conflicts_cleared`, `pending_candidates`.
+Também remover `ProjectSummaryCards` do topo (muito "engineering-ish").
 
-Função auxiliar `approveCandidate({candidateId})` e `rejectCandidate({candidateId})` para a UI da aba Consolidation.
+---
 
-## 4. Server function `resolveConflict` (`src/lib/consolidation.functions.ts`)
-Entrada: `{ conflictId, action: 'select'|'edit'|'ignore', selectedCandidateId?, manualValue?, note? }`.
-- `select`: upsert KF com valor do candidato escolhido, `source_of_truth=manually_selected_candidate`, `approved_by_user=true`, `approved_at=now`, `candidate_ids` = todos do conflito. Marca candidates do conflito `approved` (selected) / `superseded` (outros). Conflito → `resolved`.
-- `edit`: idem com `source_of_truth=manually_edited`, `field_value=manualValue`, `manual_value` salvo no conflito.
-- `ignore`: conflito → `ignored`, não muda KF. Candidates ficam `pending`.
+## Tela 1 — Upload
 
-## 5. Server function `approveAdditionalInfo` / `rejectAdditionalInfo`
-Atualiza `additional_info.status` e `approved_at`.
+Arquivo: `src/features/project/UploadTab.tsx` (novo, derivado do atual `SourcesTab`).
 
-## 6. Atualizar extração (`src/lib/ai.functions.ts`)
-No modo `persist`, AdditionalInfo passa a entrar com `status='pending'`. KnowledgeCandidates continuam com `status='pending'`. **Não cria mais KnowledgeField diretamente no persist** — isso passa a ser responsabilidade de `consolidateKnowledge`. (Ajuste compatível: se já existe lógica que insere em `knowledge_fields` no persist, remover; preservar apenas inserção em `knowledge_candidates`.)
+- Mantém os 4 importadores (CSV, PDF, URL, Fast Content) exatamente como hoje.
+- Lista de fontes com contagem de chunks.
+- Botão único **Process Knowledge** no rodapé:
+  - Internamente chama `runExtraction({ projectId, mode: "persist" })` seguido de `consolidateKnowledge({ projectId })`.
+  - Mostra um progress simples ("Classificando tópicos… Extraindo campos… Consolidando…") com toast no fim.
+- Esconder: Dry Run, Persist toggles, histórico de runs, settings de extração.
 
-## 7. UI — nova aba `Consolidation` (`src/features/project/ConsolidationTab.tsx`)
-Cards no topo: `pending candidates`, `consolidated fields`, `pending conflicts`, `resolved conflicts`.
-Botão `Run Consolidation` (chama `consolidateKnowledge`) + `Re-run`.
-Conteúdo agrupado por tópico:
-- **Consolidated Fields**: tabela (`field_label`, `value`, `source_of_truth` badge, `confidence`, sources count, `approved_by_user`, ações Approve/Edit/View Sources).
-- **Pending Candidates**: tabela com Approve/Reject/View Source.
-- **Conflicts** (subseção ou tab interna "Conflicts"): card por conflito mostrando cada valor candidato (valor, confidence, extraction_method, chunks) com ações `Select this value`, `Edit manually` (input + save), `Ignore`.
+---
 
-## 8. UI — Knowledge tab refatorada (`src/features/project/KnowledgeTab.tsx`)
-Três seções:
-- **Official Knowledge**: KnowledgeFields `consolidated`, com badge de `source_of_truth`, botões `View JSON` (modal pretty) e `View Sources` (modal listando chunks: source name, content snippet, extraction_method, confidence, candidate id, run id).
-- **Needs Review**: conflitos pendentes + candidates pendentes (links para a aba Consolidation).
-- **Additional Information**: separa `approved` vs `pending`, com Approve/Reject inline.
+## Tela 2 — Raw Knowledge
 
-## 9. UI — Playground
-`runTestAnswer` (modo structured/hybrid) passa a ler apenas `knowledge_fields` com `consolidation_status='consolidated'` + `additional_info` com `status='approved'`. Se nenhum KF consolidado para o tópico selecionado: render aviso `"No consolidated knowledge found for this topic. Run consolidation first."` no UI antes mesmo da chamada.
+Arquivo: `src/features/project/RawKnowledgeTab.tsx` (novo).
 
-## 10. Roteamento
-Adicionar `Consolidation` aos tabs em `src/routes/projects/$projectId.tsx` (ou onde os tabs vivem) entre `Extractions` e `Knowledge`.
+Tabela read-only listando `raw_chunks` joinados com `raw_sources`:
 
-## 11. Fora de escopo (não implementar)
-Benchmark automático, embeddings, PDF/URL, LLM-as-judge.
+| Chunk ID | Source | Topic detectado | Texto (truncado) | Metadata |
 
-## Entregáveis
-- 1 migração consolidada (tabelas + colunas + grants + RLS).
-- `src/lib/value-normalizer.ts`.
-- `src/lib/consolidation.functions.ts` (`consolidateKnowledge`, `approveCandidate`, `rejectCandidate`, `resolveConflict`, `approveAdditionalInfo`, `rejectAdditionalInfo`).
-- Ajuste em `src/lib/ai.functions.ts` (persist sem KF direto, AdditionalInfo pending).
-- `src/features/project/ConsolidationTab.tsx` (com seção Conflicts embutida).
-- Refator `KnowledgeTab.tsx` (Official / Needs Review / Additional Info + modais View JSON e View Sources).
-- Ajuste `PlaygroundTab.tsx` para usar só dados consolidados/aprovados.
-- Registro da nova tab no router do projeto.
+- Topic detectado = `raw_chunks.classified_topic_slug` (ou similar — confirmar na coluna existente; se não houver, derivar do último `knowledge_candidates` por chunk).
+- Busca por texto + filtro por source e por topic.
+- Botão **View JSON** abre dialog mostrando o array de chunks no formato que iria para um RAG (`{id, content, metadata, source}`).
+- Sem edição.
 
-Aprove para eu executar a migração e a implementação.
+---
+
+## Tela 3 — Structured Knowledge (principal do MVP)
+
+Arquivo: `src/features/project/StructuredKnowledgeTab.tsx` (novo, substitui a antiga `KnowledgeTab`).
+
+Layout: lista de tópicos (accordion ou sidebar + painel).
+
+Para cada tópico:
+
+1. **Core Information** — formulário com inputs para cada `data_point_definition` core do tópico, populado a partir dos `knowledge_fields` aprovados (`field_origin = core`). Inputs adequados ao `field_type` (text, time, boolean, number, currency).
+2. **Additional Information** — `<Textarea>` com texto livre. Conteúdo inicial = concatenação textual de:
+   - todos os `knowledge_fields` com `field_origin = dynamic` no formato `"Nome do campo: valor"` (sem expor o termo "dynamic field");
+   - registros de `additional_info` daquele tópico.
+   - Salvar tudo de volta em um único registro `additional_info` por tópico (ver "Modelo de persistência" abaixo).
+3. Botões por tópico:
+   - **View JSON** → dialog com `{ core_fields, additional_information, sources }`.
+   - **Source Chunks** → modal listando os `raw_chunks` referenciados em `knowledge_fields.source_chunk_ids` para esse tópico.
+
+### Modelo de persistência (sem migration)
+
+- Core fields → continuam em `knowledge_fields` (origin=core). Edição via update direto, marcando `verified=true`, `approval_status='approved'`.
+- Additional Information editado pelo usuário → gravado como um único `additional_info` row por (project, topic) com flag tipo `metadata.source = 'user_edit'`; os dynamic fields originais permanecem em `knowledge_fields` para auditoria, mas a UI mostra apenas o texto consolidado.
+
+Nada de novo schema. Compatível com pipeline existente: reprocessar regenera os fields, mas o texto consolidado do usuário permanece (não sobrescrever `additional_info` com source=user_edit ao reprocessar — pequeno ajuste em `consolidation.functions.ts`).
+
+---
+
+## Tela 4 — Compare Responses
+
+Arquivo: `src/features/project/CompareResponsesTab.tsx` (novo, substitui Playground/Benchmark).
+
+Topo — configuração do modelo (persistida em `localStorage` por projeto):
+- Provider: OpenAI, Anthropic, Google, OpenRouter, Custom Endpoint.
+- API Key, Model, Temperature, Max Tokens, System Prompt opcional.
+- Endpoint URL (quando Custom).
+
+Meio:
+- Textarea **Pergunta** + botão **Run Comparison**.
+
+Execução:
+- Duas chamadas independentes em paralelo:
+  - **A — Raw Knowledge**: contexto = top-N raw chunks (reusar lógica existente de `benchmark.functions.ts` modo `raw_chunks`).
+  - **B — Structured Knowledge**: contexto = JSON estruturado por tópico (core_fields + additional_information). Reusar modo `structured`.
+- Chamada direta ao provider via `fetch` em um novo `src/lib/llm-providers.functions.ts` (server fn) que aceita `{provider, apiKey, model, temperature, maxTokens, system, messages}` e normaliza a resposta para `{text, latencyMs, promptTokens, completionTokens}`.
+
+Saída lado a lado:
+- Cards **Raw Knowledge** e **Structured Knowledge** com: Resposta, Tempo, Tokens, Tamanho do contexto (chars), Itens utilizados (n chunks / n campos).
+- **Winner** no topo decidido por score simples: menor tempo + menos tokens + menos contexto (regra: 1 ponto por categoria onde venceu; empate possível).
+- Botões **View Prompt** e **View Context** em cada lado (dialog com `<pre>`).
+
+API keys: armazenadas só em `localStorage` (MVP, sem secret manager). Adicionar aviso visual.
+
+---
+
+## Tela 5 — Settings
+
+Arquivo: `src/features/project/SettingsTab.tsx` (novo, mescla `ExtractionSettingsTab` + `DataPointsTab`).
+
+Seções:
+1. **LLM Defaults** (espelha config do Compare, mesmo localStorage).
+2. **Extraction Pipeline**:
+   - Toggles: Regex / Keyword / LLM (persistir em `extraction_settings`).
+   - Chunk Size.
+   - Prompt de extração (textarea, vinculado ao `prompt_templates` ativo).
+3. **Data Point Definitions** (reuso direto da UI atual de `DataPointsTab`):
+   - CRUD com campos: name, type, required, description, regex_pattern, keywords.
+
+Remover do menu: Schema Evolution (continua existindo, sem link).
+
+---
+
+## Mudanças de roteamento
+
+`src/routes/projects.$projectId.tsx`:
+- Tabs reduzidas para: `upload`, `raw`, `structured`, `compare`, `settings`.
+- Default tab = `upload`.
+- Remover `ProjectSummaryCards`.
+
+`src/routes/settings.tsx` (global):
+- Manter apenas se ainda fizer sentido como tela global; caso contrário, remover do header. **A confirmar com você** (ver pergunta abaixo).
+
+---
+
+## Backend — o que muda e o que NÃO muda
+
+**Não muda**: tabelas, server functions de extração/consolidação/benchmark, pipeline regex→keyword→LLM, data point definitions, dynamic fields.
+
+**Muda (pequeno)**:
+- `consolidation.functions.ts`: respeitar `additional_info` editado pelo usuário (não sobrescrever quando `metadata.source = 'user_edit'`).
+- Novo `src/lib/llm-providers.functions.ts` para chamadas multi-provider no Compare.
+- Pequeno helper para serializar Structured Knowledge em JSON/texto consumido pelo Compare.
+
+---
+
+## Arquivos a criar
+
+- `src/features/project/UploadTab.tsx`
+- `src/features/project/RawKnowledgeTab.tsx`
+- `src/features/project/StructuredKnowledgeTab.tsx`
+- `src/features/project/CompareResponsesTab.tsx`
+- `src/features/project/SettingsTab.tsx`
+- `src/lib/llm-providers.functions.ts`
+
+## Arquivos a remover do menu (código preservado no repo por enquanto)
+
+`HealthTab`, `ExtractionAnalyticsTab`, `ExecutiveReportTab`, `SnapshotsTab`, `BenchmarkTab`, `QuestionsTab`, `ConsolidationTab`, `ExternalAgentTab`, `LabSettingsTab`, `ExtractionsTab`, `TopicsTab`, `KnowledgeTab` (antiga), `PlaygroundTab`, `ProjectSummaryCards`.
+
+Mantidos no disco para não quebrar imports residuais, mas desconectados do router. (Limpeza completa pode ser uma segunda passada se você preferir.)
+
+---
+
+## Perguntas antes de implementar
+
+1. **API keys de providers** — OK guardar só em `localStorage` (MVP), ou prefere salvar via `add_secret` no backend?
+2. **Limpeza de código** — apago de vez os arquivos das telas removidas, ou prefere manter no repo (mais seguro para rollback)?
+3. **Tela global `/settings`** — remover do header e deixar tudo dentro do projeto, ou manter espelhada?
