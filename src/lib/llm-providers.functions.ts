@@ -313,7 +313,7 @@ export const runCompare = createServerFn({ method: "POST" })
 
     const [rawCtx, structCtx] = await Promise.all([
       buildRawContext(sb, data.projectId, data.question, maxChunks),
-      buildStructuredContext(sb, data.projectId),
+      buildStructuredContext(sb, data.projectId, data.question),
     ]);
 
     const cfg: LlmConfig = {
