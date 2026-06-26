@@ -56,15 +56,25 @@ type TestEval = {
 export function BenchmarkTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const runFn = useServerFn(runBenchmark);
-  const [selectedModes, setSelectedModes] = useState<Mode[]>([...ALL_MODES]);
+  const [selectedModes, setSelectedModes] = useState<Mode[]>(["raw_chunks", "structured", "structured_only"]);
   const [questionLimit, setQuestionLimit] = useState<string>("");
   const [maxChunks, setMaxChunks] = useState<string>("20");
   const [temperature, setTemperature] = useState<string>("");
   const [modelOverride, setModelOverride] = useState<string>("");
   const [includeAddl, setIncludeAddl] = useState<boolean>(true);
   const [batchName, setBatchName] = useState<string>("");
+  const [externalAgentId, setExternalAgentId] = useState<string>("");
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const { data: agents } = useQuery({
+    queryKey: ["external-agents-bench", projectId],
+    queryFn: async () => {
+      const { data } = await supabase.from("external_agents").select("id, name, model")
+        .or(`project_id.eq.${projectId},project_id.is.null`).eq("active", true);
+      return data ?? [];
+    },
+  });
 
   const { data: questions } = useQuery({
     queryKey: ["test_questions", projectId],
