@@ -32,7 +32,7 @@ export type DynamicAggregate = {
   projects_count: number;
   consolidated_count: number;
   avg_confidence: number;
-  examples: unknown[];
+  examples: any[];
   suggestion_score: number;
   already_official: boolean;
   suggestion_status: "pending" | "approved" | "rejected" | null;
