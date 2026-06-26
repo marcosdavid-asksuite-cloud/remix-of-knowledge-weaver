@@ -67,7 +67,7 @@ export type ExtractionAnalytics = {
     source_id: string;
     source_name: string;
     content_preview: string;
-    metadata: unknown;
+    metadata: any;
     extraction_status: string;
   }>;
   low_confidence_candidates: Array<{
@@ -75,7 +75,7 @@ export type ExtractionAnalytics = {
     topic_slug: string;
     field_name: string;
     field_origin: string;
-    field_value: unknown;
+    field_value: any;
     confidence: number;
     extraction_method: string;
     source_chunk_ids: string[];
@@ -85,7 +85,7 @@ export type ExtractionAnalytics = {
     field_name: string;
     occurrences: number;
     topics: string[];
-    examples: unknown[];
+    examples: any[];
     sources: string[];
     candidate_ids: string[];
     suggested_topic_definition_id: string;
@@ -127,7 +127,7 @@ export const getExtractionAnalytics = createServerFn({ method: "POST" })
     const { projectId } = data;
 
     const [sourcesRes, topicsRes, topicDefsRes, dpdsRes, candidatesRes, conflictsRes, addInfoRes, fieldsRes, runsRes] = await Promise.all([
-      sb.from("raw_sources").select("id, name").eq("project_id", projectId),
+      sb.from("raw_sources").select("id, filename").eq("project_id", projectId),
       sb.from("topics").select("id, topic_definition_id").eq("project_id", projectId),
       sb.from("topic_definitions").select("id, slug, name"),
       sb.from("data_point_definitions").select("id, topic_definition_id, field_name").eq("active", true),
@@ -152,7 +152,7 @@ export const getExtractionAnalytics = createServerFn({ method: "POST" })
     // chunks scoped to project
     const { data: chunksAll } = sourceIds.length > 0
       ? await sb.from("raw_chunks").select("id, raw_source_id, content, metadata, extraction_status").in("raw_source_id", sourceIds)
-      : { data: [] as Array<{ id: string; raw_source_id: string; content: string; metadata: unknown; extraction_status: string }> };
+      : { data: [] as Array<{ id: string; raw_source_id: string; content: string; metadata: any; extraction_status: string }> };
     const allChunks = chunksAll ?? [];
 
     const topicDefById = new Map(topicDefs.map((t) => [t.id, t]));
@@ -280,7 +280,7 @@ export const getExtractionAnalytics = createServerFn({ method: "POST" })
       .map((c) => ({
         chunk_id: c.id,
         source_id: c.raw_source_id,
-        source_name: sourceById.get(c.raw_source_id)?.name ?? "—",
+        source_name: sourceById.get(c.raw_source_id)?.filename ?? "—",
         content_preview: (c.content ?? "").slice(0, 240),
         metadata: c.metadata,
         extraction_status: c.extraction_status,
@@ -306,7 +306,7 @@ export const getExtractionAnalytics = createServerFn({ method: "POST" })
       });
 
     // Dynamic fields grouped
-    const dynMap = new Map<string, { occurrences: number; topics: Set<string>; examples: unknown[]; sources: Set<string>; candidate_ids: string[]; suggested_topic_definition_id: string; suggested_topic_slug: string }>();
+    const dynMap = new Map<string, { occurrences: number; topics: Set<string>; examples: any[]; sources: Set<string>; candidate_ids: string[]; suggested_topic_definition_id: string; suggested_topic_slug: string }>();
     for (const c of candidates) {
       if (c.field_origin !== "dynamic") continue;
       const key = c.field_name.trim().toLowerCase();
