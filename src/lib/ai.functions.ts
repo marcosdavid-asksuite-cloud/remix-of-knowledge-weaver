@@ -190,6 +190,31 @@ function canonicalValue(v: unknown): string {
   return String(v).trim().toLowerCase();
 }
 
+// ----- Field-name normalization (used to dedupe dynamic vs core) -----
+const PT_STOPWORDS = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "em", "para", "the", "of"]);
+function normalizeFieldKey(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+function tokensFieldKey(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t && !PT_STOPWORDS.has(t))
+    .join("");
+}
+function fieldKeyVariants(s: string): string[] {
+  const set = new Set<string>();
+  const n = normalizeFieldKey(s);
+  const t = tokensFieldKey(s);
+  if (n) set.add(n);
+  if (t) set.add(t);
+  return Array.from(set);
+}
+
 // =====================================================
 // runExtraction (Etapa 2 — DataPoint-aware)
 // =====================================================
