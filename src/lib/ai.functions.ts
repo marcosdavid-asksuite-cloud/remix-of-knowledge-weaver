@@ -897,21 +897,26 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         const endDpd = dps.find((d) => d.field_type === "time" && (d.field_name === `${base}_end_time` || d.field_name === `${base}_end` || d.field_name === `${base}_fim` || d.field_name === `${base}_fim_time`));
         if (!endDpd) continue;
         for (const c of useChunks) {
-          const range = extractTimeRange(c.content);
-          if (range) {
-            if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
-            if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
-            break;
-          }
+          // Only search inside sentences that actually mention this topic — avoid grabbing checkout/checkin times for breakfast.
+          const snippet = topicRelevantSnippet(c.content, topic);
+          const range = extractTimeRange(snippet);
+          if (!range) continue;
+          if (!isSaneTimeRange(range, topic.slug, startDpd.field_name, endDpd.field_name)) continue;
+          if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
+          if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
+          break;
         }
       }
 
-      // Per-field deterministic pass — first-match wins.
+      // Per-field deterministic pass — first-match wins, restricted to topic-relevant sentences.
       for (const c of useChunks) {
+        const snippet = topicRelevantSnippet(c.content, topic);
         for (const d of dps) {
           if (coreValues.has(d.field_name)) continue;
-          const det = tryDeterministic(d, c.content);
-          if (det) coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
+          const det = tryDeterministic(d, snippet);
+          if (!det) continue;
+          if (d.field_type === "time" && !isSaneTime(det.value, topic.slug, d.field_name)) continue;
+          coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
         }
       }
 
