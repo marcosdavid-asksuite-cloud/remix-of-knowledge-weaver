@@ -212,20 +212,12 @@ function TopicEditor({
 
     // Compose Additional Information textarea:
     // - if user has saved an edit (single approved row with source_chunk_ids empty), prefer that
-    // - else: dynamic_fields rendered as "field: value" + addl contents
+    // - else: only the AI-extracted addl contents (dynamic fields are NOT auto-merged into the textarea)
     const userEdit = addls.find((a) => (a.source_chunk_ids ?? []).length === 0);
     if (userEdit) {
       setAddlText(userEdit.content);
     } else {
-      const dynamicLines = fields
-        .filter((f) => f.field_origin === "dynamic")
-        .map((f) => {
-          const v = typeof f.field_value === "object" ? JSON.stringify(f.field_value) : String(f.field_value);
-          const label = f.field_name.replace(/_/g, " ");
-          return `${label}: ${v}`;
-        });
-      const addlLines = addls.map((a) => a.content);
-      setAddlText([...addlLines, ...dynamicLines].join("\n\n"));
+      setAddlText(addls.map((a) => a.content).join("\n\n"));
     }
   }, [topic.id, dpds, fields, addls]);
 
