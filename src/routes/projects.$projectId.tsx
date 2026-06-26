@@ -13,6 +13,10 @@ import { PlaygroundTab } from "@/features/project/PlaygroundTab";
 import { BenchmarkTab } from "@/features/project/BenchmarkTab";
 import { HealthTab } from "@/features/project/HealthTab";
 import { ExtractionAnalyticsTab } from "@/features/project/ExtractionAnalyticsTab";
+import { ExecutiveReportTab } from "@/features/project/ExecutiveReportTab";
+import { ExternalAgentTab } from "@/features/project/ExternalAgentTab";
+import { LabSettingsTab } from "@/features/project/LabSettingsTab";
+import { SnapshotsTab } from "@/features/project/SnapshotsTab";
 import { ProjectSummaryCards } from "@/features/project/ProjectSummaryCards";
 import { Button } from "@/components/ui/button";
 
