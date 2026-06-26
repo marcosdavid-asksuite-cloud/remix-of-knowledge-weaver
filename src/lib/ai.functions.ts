@@ -249,9 +249,8 @@ export const runExtraction = createServerFn({ method: "POST" })
     const defIds = topics.map((t) => t.defId);
     const { data: dpdRaw } = await sb
       .from("data_point_definitions").select("*").in("topic_definition_id", defIds).eq("active", true);
-    const dpdByDefId = new Map<string, Array<{
-      field_name: string; field_label: string; field_type: string; description: string | null;
-    }>>();
+    type DpdFull = DpdLite & { field_label: string; description: string | null };
+    const dpdByDefId = new Map<string, DpdFull[]>();
     for (const d of dpdRaw ?? []) {
       const list = dpdByDefId.get(d.topic_definition_id) ?? [];
       list.push({
@@ -259,9 +258,18 @@ export const runExtraction = createServerFn({ method: "POST" })
         field_label: d.field_label,
         field_type: d.field_type,
         description: d.description,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        extraction_strategy: (d as any).extraction_strategy ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        regex_pattern: (d as any).regex_pattern ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        keywords: (d as any).keywords ?? {},
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        negative_keywords: (d as any).negative_keywords ?? [],
       });
       dpdByDefId.set(d.topic_definition_id, list);
     }
+
 
     // Create the extraction_run row
     const { data: run, error: runErr } = await sb
