@@ -31,6 +31,9 @@ const FIELD_TYPES = [
 ] as const;
 type FieldType = (typeof FIELD_TYPES)[number];
 
+const STRATEGIES = ["regex", "keyword", "hybrid", "llm"] as const;
+type Strategy = (typeof STRATEGIES)[number];
+
 type Dpd = {
   id: string;
   topic_definition_id: string;
@@ -40,6 +43,10 @@ type Dpd = {
   description: string | null;
   required: boolean;
   active: boolean;
+  extraction_strategy: Strategy;
+  regex_pattern: string | null;
+  keywords: unknown;
+  negative_keywords: unknown;
 };
 
 const TOPIC_EMOJI: Record<string, string> = {
