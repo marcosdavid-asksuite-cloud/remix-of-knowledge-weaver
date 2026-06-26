@@ -154,13 +154,13 @@ async function classifyChunkWithLLM(
 // ----- Per (chunk, topic) extraction schema -----
 const CoreFieldSchema = z.object({
   field_name: z.string(),
-  field_value: z.unknown(),
+  field_value: z.any(),
   confidence: z.number().min(0).max(1).optional(),
 });
 const DynamicFieldSchema = z.object({
   field_name: z.string(),
   field_type: z.enum(["text", "boolean", "number", "currency", "time", "time_range", "multi_select"]),
-  field_value: z.unknown(),
+  field_value: z.any(),
   confidence: z.number().min(0).max(1).optional(),
 });
 const ExtractionSchema = z.object({
@@ -169,6 +169,7 @@ const ExtractionSchema = z.object({
   additional_information: z.array(z.string()).default([]),
 });
 type Extraction = z.infer<typeof ExtractionSchema>;
+
 
 function renderPrompt(tmpl: string, vars: Record<string, string>): string {
   return tmpl.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? "");
@@ -279,8 +280,11 @@ export const runExtraction = createServerFn({ method: "POST" })
       topic_slug: string;
       topic_name: string;
       topic_def_id: string;
-      core_fields: Array<{ field_name: string; field_value: unknown; confidence?: number; source_chunk_ids: string[] }>;
-      dynamic_fields: Array<{ field_name: string; field_type: string; field_value: unknown; confidence?: number; source_chunk_ids: string[] }>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      core_fields: Array<{ field_name: string; field_value: any; confidence?: number; source_chunk_ids: string[] }>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      dynamic_fields: Array<{ field_name: string; field_type: string; field_value: any; confidence?: number; source_chunk_ids: string[] }>;
+
       additional_information: Array<{ content: string; source_chunk_ids: string[] }>;
     };
     const agg = new Map<string, TopicAggregate>();
