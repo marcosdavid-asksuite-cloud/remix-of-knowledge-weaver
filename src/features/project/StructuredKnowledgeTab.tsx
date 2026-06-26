@@ -380,12 +380,20 @@ function TopicEditor({
               <span>{TOPIC_EMOJI[slug] ?? "📁"}</span>
               {name}
               <Badge variant="outline" className="font-mono text-[10px]">{slug}</Badge>
+              {dpds.length > 0 && (
+                <Badge variant={coreFilled === dpds.length ? "default" : "secondary"} className="text-[10px]">
+                  {coreFilled}/{dpds.length} campos
+                </Badge>
+              )}
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
               Core Information são os campos oficiais. Informações adicionais é texto livre que complementa a base.
             </p>
           </div>
           <div className="flex gap-1">
+            <Button variant="default" size="sm" onClick={reextract} disabled={reextracting}>
+              {reextracting ? "Re-extraindo…" : "Re-extrair tópico"}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setSourcesOpen(true)}>
               Source Chunks ({allSourceChunks.length})
             </Button>
