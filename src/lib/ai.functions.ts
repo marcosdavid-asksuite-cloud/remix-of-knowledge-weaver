@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
-import { tryDeterministic, type DpdLite } from "./deterministic-extractors";
+import { tryDeterministic, extractTimeRange, type DpdLite } from "./deterministic-extractors";
 
 
 // --------- Pricing table (rough; per 1M tokens, USD) ----------
