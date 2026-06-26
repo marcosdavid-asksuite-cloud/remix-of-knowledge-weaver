@@ -59,6 +59,19 @@ export function UploadTab({ projectId }: { projectId: string }) {
     }
     setProcessing(true);
     try {
+      setProcessStep("Ativando tópicos…");
+      // Auto-activate all topic_definitions for this project (idempotent).
+      const { data: defs } = await supabase
+        .from("topic_definitions").select("id").eq("active", true);
+      const { data: existing } = await supabase
+        .from("topics").select("topic_definition_id").eq("project_id", projectId);
+      const have = new Set((existing ?? []).map((e) => e.topic_definition_id));
+      const toInsert = (defs ?? []).filter((d) => !have.has(d.id)).map((d) => ({
+        project_id: projectId,
+        topic_definition_id: d.id,
+      }));
+      if (toInsert.length > 0) await supabase.from("topics").insert(toInsert as never);
+
       setProcessStep("Classificando tópicos e extraindo campos…");
       const ext = (await runExtractionFn({ data: { projectId, mode: "persist" } })) as {
         stats: { core_fields_found: number; dynamic_fields_found: number; additional_info_found: number };
