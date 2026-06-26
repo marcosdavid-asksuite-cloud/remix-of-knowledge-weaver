@@ -536,8 +536,10 @@ export const runExtraction = createServerFn({ method: "POST" })
               confidence: f.confidence ?? null,
               source_chunk_ids: f.source_chunk_ids as never,
               status: "pending",
-            });
+              extraction_method: f.extraction_method,
+            } as never);
             persisted.candidates++;
+
 
             const key = `${f.field_name}|${canonicalValue(f.field_value)}`;
             const existingRow = existingMap.get(key);
