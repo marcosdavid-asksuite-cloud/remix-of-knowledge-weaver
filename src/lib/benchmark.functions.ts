@@ -348,14 +348,31 @@ export const runBenchmark = createServerFn({ method: "POST" })
 
           try {
             const userPrompt = buildPrompt(q.question, context.text);
-            const res = await callGateway({
-              model,
-              temperature,
-              maxTokens: modelCfg.max_tokens,
-              system: ANSWER_SYSTEM_PROMPT,
-              user: userPrompt,
-            });
-            const cost = estimateCost(model, res.inputTokens, res.outputTokens);
+            let res: { content: string; inputTokens: number; outputTokens: number; latency: number };
+            let runModelName = model;
+            let requestPayload: unknown = null;
+
+            if (mode === "external_agent" && externalAgent) {
+              const ext = await callExternalAgentInline(externalAgent, q.question, context.text);
+              res = {
+                content: ext.content,
+                inputTokens: ext.inputTokens ?? 0,
+                outputTokens: ext.outputTokens ?? 0,
+                latency: ext.latency,
+              };
+              runModelName = externalAgent.model ?? externalAgent.name;
+              requestPayload = ext.requestPayload;
+            } else {
+              res = await callGateway({
+                model,
+                temperature,
+                maxTokens: modelCfg.max_tokens,
+                system: ANSWER_SYSTEM_PROMPT,
+                user: userPrompt,
+              });
+            }
+
+            const cost = mode === "external_agent" ? 0 : estimateCost(model, res.inputTokens, res.outputTokens);
             await sb.from("test_runs").insert({
               question_id: q.id,
               project_id: data.projectId,
@@ -367,13 +384,15 @@ export const runBenchmark = createServerFn({ method: "POST" })
               output_tokens: res.outputTokens,
               estimated_cost: cost,
               latency_ms: res.latency,
-              model_name: model,
+              model_name: runModelName,
               status: "success",
-              model_configuration_id: modelCfg.id,
+              model_configuration_id: mode === "external_agent" ? null : modelCfg.id,
+              external_agent_id: mode === "external_agent" ? externalAgent?.id ?? null : null,
+              request_payload: requestPayload as never,
             });
             await sb.from("llm_calls").insert({
               prompt_type: `benchmark:${mode}`,
-              model_name: model,
+              model_name: runModelName,
               input_tokens: res.inputTokens,
               output_tokens: res.outputTokens,
               latency: res.latency,
