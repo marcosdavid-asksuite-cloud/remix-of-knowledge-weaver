@@ -440,7 +440,7 @@ export const runTestAnswer = createServerFn({ method: "POST" })
       input_tokens: result.inputTokens,
       output_tokens: result.outputTokens,
       estimated_cost: cost,
-      test_run_id: testRun?.id,
-      context_sent: contextSent,
+      test_run_id: testRun?.id ?? null,
     };
   });
+
