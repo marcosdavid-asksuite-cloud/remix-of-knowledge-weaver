@@ -187,15 +187,21 @@ export function DataPointsTab() {
                   <th className="py-2 pr-3">Strategy</th>
                   <th className="py-2 pr-3">Required</th>
                   <th className="py-2 pr-3">Active</th>
+                  <th className="py-2 pr-3">Cands</th>
+                  <th className="py-2 pr-3">Consol.</th>
+                  <th className="py-2 pr-3">Avg Conf</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {topicDps.map((d) => (
+                {topicDps.map((d) => {
+                  const s = stats?.[`${d.topic_definition_id}::${d.field_name}`];
+                  return (
                   <tr key={d.id} className="border-b last:border-0">
                     <td className="py-2 pr-3">{d.field_label}</td>
                     <td className="py-2 pr-3 font-mono text-xs">
                       {d.field_name}
+
                     </td>
                     <td className="py-2 pr-3">
                       <Badge variant="secondary" className="text-[10px]">
