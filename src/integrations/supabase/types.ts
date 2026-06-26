@@ -698,6 +698,78 @@ export type Database = {
           },
         ]
       }
+      suggested_data_points: {
+        Row: {
+          avg_confidence: number
+          consolidated_count: number
+          created_at: string
+          examples: Json
+          id: string
+          occurrences: number
+          projects_count: number
+          resulting_data_point_id: string | null
+          status: string
+          suggested_field_name: string
+          suggested_label: string
+          suggested_type: string
+          suggestion_score: number
+          topic_definition_id: string | null
+          topic_slug: string
+          updated_at: string
+        }
+        Insert: {
+          avg_confidence?: number
+          consolidated_count?: number
+          created_at?: string
+          examples?: Json
+          id?: string
+          occurrences?: number
+          projects_count?: number
+          resulting_data_point_id?: string | null
+          status?: string
+          suggested_field_name: string
+          suggested_label: string
+          suggested_type?: string
+          suggestion_score?: number
+          topic_definition_id?: string | null
+          topic_slug: string
+          updated_at?: string
+        }
+        Update: {
+          avg_confidence?: number
+          consolidated_count?: number
+          created_at?: string
+          examples?: Json
+          id?: string
+          occurrences?: number
+          projects_count?: number
+          resulting_data_point_id?: string | null
+          status?: string
+          suggested_field_name?: string
+          suggested_label?: string
+          suggested_type?: string
+          suggestion_score?: number
+          topic_definition_id?: string | null
+          topic_slug?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suggested_data_points_resulting_data_point_id_fkey"
+            columns: ["resulting_data_point_id"]
+            isOneToOne: false
+            referencedRelation: "data_point_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suggested_data_points_topic_definition_id_fkey"
+            columns: ["topic_definition_id"]
+            isOneToOne: false
+            referencedRelation: "topic_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       test_batches: {
         Row: {
           created_at: string

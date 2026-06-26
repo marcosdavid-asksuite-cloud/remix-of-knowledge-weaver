@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { calculateKnowledgeHealth, type HealthReport, type TopicHealth } from "@/lib/health.functions";
+import { getSuggestionsByTopic } from "@/lib/schema-evolution.functions";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,12 @@ export function HealthTab({ projectId }: { projectId: string }) {
     queryKey: ["health", projectId],
     queryFn: () => runCalc({ data: { projectId, persistSnapshot: false } }),
     staleTime: 30_000,
+  });
+
+  const suggestionsByTopicFn = useServerFn(getSuggestionsByTopic);
+  const { data: suggByTopic } = useQuery({
+    queryKey: ["suggestions_by_topic"],
+    queryFn: () => suggestionsByTopicFn() as Promise<Record<string, number>>,
   });
 
   async function recompute() {
@@ -149,6 +156,7 @@ export function HealthTab({ projectId }: { projectId: string }) {
                 <th className="py-2 pr-3">Conflicts</th>
                 <th className="py-2 pr-3">Pending Review</th>
                 <th className="py-2 pr-3">Dyn Ratio</th>
+                <th className="py-2 pr-3">Schema Evo</th>
                 <th className="py-2 pr-3">Flags</th>
                 <th />
               </tr>
@@ -166,6 +174,11 @@ export function HealthTab({ projectId }: { projectId: string }) {
                   <td className="py-2 pr-3 tabular-nums">{t.pending_conflicts_count}</td>
                   <td className="py-2 pr-3 tabular-nums">{t.pending_candidates_count + t.pending_additional_info_count}</td>
                   <td className="py-2 pr-3 tabular-nums">{Math.round(t.dynamic_ratio * 100)}%</td>
+                  <td className="py-2 pr-3">
+                    {suggByTopic?.[t.topic_slug]
+                      ? <Link to="/settings" className="text-xs underline"><Badge variant="secondary">+{suggByTopic[t.topic_slug]} Suggested</Badge></Link>
+                      : <span className="text-xs text-muted-foreground">—</span>}
+                  </td>
                   <td className="py-2 pr-3">
                     <div className="flex flex-wrap gap-1">
                       {t.flags.map((f) => (
