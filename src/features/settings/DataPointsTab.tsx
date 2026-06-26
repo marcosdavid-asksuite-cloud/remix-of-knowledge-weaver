@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { getDataPointStats } from "@/lib/analytics.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -92,8 +95,15 @@ export function DataPointsTab() {
     },
   });
 
+  const fetchStats = useServerFn(getDataPointStats);
+  const { data: stats } = useQuery({
+    queryKey: ["data-point-stats"],
+    queryFn: () => fetchStats({ data: {} }),
+  });
+
   const currentTopicId =
     selectedTopicId ?? topics?.[0]?.id ?? null;
+
   const currentTopic = topics?.find((t) => t.id === currentTopicId);
   const topicDps = (dps ?? []).filter(
     (d) => d.topic_definition_id === currentTopicId,
@@ -177,15 +187,21 @@ export function DataPointsTab() {
                   <th className="py-2 pr-3">Strategy</th>
                   <th className="py-2 pr-3">Required</th>
                   <th className="py-2 pr-3">Active</th>
+                  <th className="py-2 pr-3">Cands</th>
+                  <th className="py-2 pr-3">Consol.</th>
+                  <th className="py-2 pr-3">Avg Conf</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                {topicDps.map((d) => (
+                {topicDps.map((d) => {
+                  const s = stats?.[`${d.topic_definition_id}::${d.field_name}`];
+                  return (
                   <tr key={d.id} className="border-b last:border-0">
                     <td className="py-2 pr-3">{d.field_label}</td>
                     <td className="py-2 pr-3 font-mono text-xs">
                       {d.field_name}
+
                     </td>
                     <td className="py-2 pr-3">
                       <Badge variant="secondary" className="text-[10px]">
@@ -217,6 +233,11 @@ export function DataPointsTab() {
                         }}
                       />
                     </td>
+                    <td className="py-2 pr-3 tabular-nums text-xs">{s?.candidates ?? 0}</td>
+                    <td className="py-2 pr-3 tabular-nums text-xs">{s?.consolidated ?? 0}</td>
+                    <td className="py-2 pr-3 tabular-nums text-xs">
+                      {s?.avg_confidence != null ? s.avg_confidence.toFixed(2) : "—"}
+                    </td>
                     <td className="py-2 pr-3 text-right">
                       <div className="flex justify-end gap-1">
                         <EditDialog
@@ -247,7 +268,9 @@ export function DataPointsTab() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
+
               </tbody>
             </table>
           )}

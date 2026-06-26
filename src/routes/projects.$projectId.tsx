@@ -12,16 +12,24 @@ import { QuestionsTab } from "@/features/project/QuestionsTab";
 import { PlaygroundTab } from "@/features/project/PlaygroundTab";
 import { BenchmarkTab } from "@/features/project/BenchmarkTab";
 import { HealthTab } from "@/features/project/HealthTab";
+import { ExtractionAnalyticsTab } from "@/features/project/ExtractionAnalyticsTab";
 import { ProjectSummaryCards } from "@/features/project/ProjectSummaryCards";
 import { Button } from "@/components/ui/button";
 
+type Search = { tab?: string; topic?: string };
+
 export const Route = createFileRoute("/projects/$projectId")({
   head: () => ({ meta: [{ title: "Project — Hybrid KB Lab" }] }),
+  validateSearch: (s: Record<string, unknown>): Search => ({
+    tab: typeof s.tab === "string" ? s.tab : undefined,
+    topic: typeof s.topic === "string" ? s.topic : undefined,
+  }),
   component: ProjectDetail,
 });
 
 function ProjectDetail() {
   const { projectId } = Route.useParams();
+  const { tab, topic } = Route.useSearch();
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", projectId],
     queryFn: async () => {
@@ -54,8 +62,8 @@ function ProjectDetail() {
 
       <div className="mb-6"><ProjectSummaryCards projectId={projectId} /></div>
 
-      <Tabs defaultValue="sources">
-        <TabsList>
+      <Tabs defaultValue={tab ?? "sources"}>
+        <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="sources">Sources</TabsTrigger>
           <TabsTrigger value="topics">Topics</TabsTrigger>
           <TabsTrigger value="extractions">Extractions</TabsTrigger>
@@ -65,6 +73,7 @@ function ProjectDetail() {
           <TabsTrigger value="playground">Playground</TabsTrigger>
           <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
+          <TabsTrigger value="analytics">Extraction Analytics</TabsTrigger>
         </TabsList>
         <TabsContent value="sources" className="mt-6"><SourcesTab projectId={projectId} /></TabsContent>
         <TabsContent value="topics" className="mt-6"><TopicsTab projectId={projectId} /></TabsContent>
@@ -75,7 +84,9 @@ function ProjectDetail() {
         <TabsContent value="playground" className="mt-6"><PlaygroundTab projectId={projectId} /></TabsContent>
         <TabsContent value="benchmark" className="mt-6"><BenchmarkTab projectId={projectId} /></TabsContent>
         <TabsContent value="health" className="mt-6"><HealthTab projectId={projectId} /></TabsContent>
+        <TabsContent value="analytics" className="mt-6"><ExtractionAnalyticsTab projectId={projectId} initialTopicSlug={topic} /></TabsContent>
       </Tabs>
     </AppShell>
   );
 }
+

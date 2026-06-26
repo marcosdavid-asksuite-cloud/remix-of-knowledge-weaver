@@ -194,9 +194,11 @@ function canonicalValue(v: unknown): string {
 // runExtraction (Etapa 2 — DataPoint-aware)
 // =====================================================
 export const runExtraction = createServerFn({ method: "POST" })
-  .inputValidator((input: { projectId: string; mode: "dry_run" | "persist" }) => input)
+  .inputValidator((input: { projectId: string; mode: "dry_run" | "persist"; chunkIds?: string[] }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
+
+
 
     // Project + sources + chunks
     const { data: project } = await sb
@@ -218,10 +220,16 @@ export const runExtraction = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
 
-    const { data: chunksRaw } = await sb
+    let chunkQuery = sb
       .from("raw_chunks").select("id, content").in("raw_source_id", sourceIds).order("position");
+    if (data.chunkIds && data.chunkIds.length > 0) {
+      chunkQuery = sb
+        .from("raw_chunks").select("id, content").in("id", data.chunkIds).order("position");
+    }
+    const { data: chunksRaw } = await chunkQuery;
     const allChunks = chunksRaw ?? [];
-    const chunks = allChunks.slice(0, settings.max_chunks);
+    const chunks = data.chunkIds && data.chunkIds.length > 0 ? allChunks : allChunks.slice(0, settings.max_chunks);
+
     if (chunks.length === 0) throw new Error("Nenhum chunk encontrado.");
 
     // Topics in this project (with definitions + aliases)
@@ -550,8 +558,30 @@ export const runExtraction = createServerFn({ method: "POST" })
         }
       }
 
+      // --- Update raw_chunks.extraction_status (only in persist mode) ---
+      if (data.mode === "persist") {
+        const extractedChunkIds = new Set<string>();
+        for (const b of agg.values()) {
+          for (const f of b.core_fields) f.source_chunk_ids.forEach((id) => extractedChunkIds.add(id));
+          for (const f of b.dynamic_fields) f.source_chunk_ids.forEach((id) => extractedChunkIds.add(id));
+          for (const a of b.additional_information) a.source_chunk_ids.forEach((id) => extractedChunkIds.add(id));
+        }
+        const processedIds = chunks.map((c) => c.id);
+        const noKnowledgeIds = processedIds.filter((id) => !extractedChunkIds.has(id));
+        if (extractedChunkIds.size > 0) {
+          await sb.from("raw_chunks").update({ extraction_status: "extracted" } as never)
+            .in("id", Array.from(extractedChunkIds));
+        }
+        if (noKnowledgeIds.length > 0) {
+          // Don't overwrite manually-marked irrelevant chunks
+          await sb.from("raw_chunks").update({ extraction_status: "no_knowledge_found" } as never)
+            .in("id", noKnowledgeIds)
+            .neq("extraction_status", "marked_irrelevant");
+        }
+      }
 
       const preview = { topics: previewTopics, chunk_topics: chunkTopicMap, statistics: stats, persisted };
+
 
       await sb.from("extraction_runs").update({
         status: "done",

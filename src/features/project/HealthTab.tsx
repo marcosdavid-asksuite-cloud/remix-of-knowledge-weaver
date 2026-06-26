@@ -1,8 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { calculateKnowledgeHealth, type HealthReport, type TopicHealth } from "@/lib/health.functions";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -171,11 +173,20 @@ export function HealthTab({ projectId }: { projectId: string }) {
                       ))}
                     </div>
                   </td>
-                  <td className="py-2 text-right">
+                  <td className="py-2 text-right whitespace-nowrap">
+                    <Link
+                      to="/projects/$projectId"
+                      params={{ projectId }}
+                      search={{ tab: "analytics", topic: t.topic_slug }}
+                      className="text-xs underline mr-2"
+                    >
+                      View Analytics
+                    </Link>
                     <Button size="sm" variant="ghost" onClick={() => setSelected(t)}>Detalhes</Button>
                   </td>
                 </tr>
               ))}
+
             </tbody>
           </table>
         </CardContent>

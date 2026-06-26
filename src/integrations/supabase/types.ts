@@ -632,6 +632,7 @@ export type Database = {
         Row: {
           content: string
           created_at: string
+          extraction_status: string
           id: string
           metadata: Json
           position: number
@@ -640,6 +641,7 @@ export type Database = {
         Insert: {
           content: string
           created_at?: string
+          extraction_status?: string
           id?: string
           metadata?: Json
           position?: number
@@ -648,6 +650,7 @@ export type Database = {
         Update: {
           content?: string
           created_at?: string
+          extraction_status?: string
           id?: string
           metadata?: Json
           position?: number
