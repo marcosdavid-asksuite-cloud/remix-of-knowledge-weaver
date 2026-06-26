@@ -59,13 +59,18 @@ export function ExecutiveReportTab({ projectId }: { projectId: string }) {
       const topicIds = (topics ?? []).map((t) => t.id);
       let chunks = 0, consolidated = 0, dynamic = 0, additional = 0, conflicts = 0;
       if (topicIds.length > 0) {
-        const [
-          { count: ch }, { count: kf }, { count: dyn },
-          { count: ad }, { count: cf },
-        ] = await Promise.all([
-          supabase.from("raw_chunks").select("id, raw_source_id!inner(project_id)", { count: "exact", head: true })
-            .eq("raw_source_id.project_id" as never, projectId as never)
-            .then((r) => ({ count: r.count ?? 0 })).catch(() => ({ count: 0 })),
+        // chunks via raw_source ids
+        const { data: srcRows } = await supabase
+          .from("raw_sources").select("id").eq("project_id", projectId);
+        const srcIds = (srcRows ?? []).map((r) => r.id);
+        let chunkCount = 0;
+        if (srcIds.length > 0) {
+          const { count: ch } = await supabase
+            .from("raw_chunks").select("id", { count: "exact", head: true })
+            .in("raw_source_id", srcIds);
+          chunkCount = ch ?? 0;
+        }
+        const [{ count: kf }, { count: dyn }, { count: ad }, { count: cf }] = await Promise.all([
           supabase.from("knowledge_fields").select("id", { count: "exact", head: true })
             .in("topic_id", topicIds).eq("consolidation_status", "consolidated"),
           supabase.from("knowledge_fields").select("id", { count: "exact", head: true })
@@ -75,7 +80,7 @@ export function ExecutiveReportTab({ projectId }: { projectId: string }) {
           supabase.from("knowledge_conflicts").select("id", { count: "exact", head: true })
             .in("topic_id", topicIds).eq("status", "pending"),
         ]);
-        chunks = ch; consolidated = kf ?? 0; dynamic = dyn ?? 0; additional = ad ?? 0; conflicts = cf ?? 0;
+        chunks = chunkCount; consolidated = kf ?? 0; dynamic = dyn ?? 0; additional = ad ?? 0; conflicts = cf ?? 0;
       }
       return { sources: sources ?? 0, chunks, consolidated, dynamic, additional, conflicts };
     },
