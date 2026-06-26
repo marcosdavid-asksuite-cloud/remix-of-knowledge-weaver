@@ -194,8 +194,10 @@ function canonicalValue(v: unknown): string {
 // runExtraction (Etapa 2 — DataPoint-aware)
 // =====================================================
 export const runExtraction = createServerFn({ method: "POST" })
-  .inputValidator((input: { projectId: string; mode: "dry_run" | "persist" }) => input)
+  .inputValidator((input: { projectId: string; mode: "dry_run" | "persist"; chunkIds?: string[] }) => input)
   .handler(async ({ data }) => {
+    const sb = getSb();
+
     const sb = getSb();
 
     // Project + sources + chunks
