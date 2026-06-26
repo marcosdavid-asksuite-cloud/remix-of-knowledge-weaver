@@ -392,9 +392,6 @@ export function ConsolidationTab({ projectId }: { projectId: string }) {
         chunkIds={sourcesFor?.ids ?? []}
         title={sourcesFor?.title ?? ""}
       />
-
-      {/* avoid unused warnings */}
-      {void topicById && null}
     </div>
   );
 }

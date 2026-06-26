@@ -37,6 +37,23 @@ export function PlaygroundTab({ projectId }: { projectId: string }) {
     },
   });
 
+  const { data: consolidatedCount } = useQuery({
+    queryKey: ["consolidated_count", projectId],
+    queryFn: async () => {
+      const { data: topics } = await supabase
+        .from("topics").select("id").eq("project_id", projectId);
+      const ids = (topics ?? []).map((t) => t.id);
+      if (ids.length === 0) return 0;
+      const { count } = await supabase
+        .from("knowledge_fields")
+        .select("*", { count: "exact", head: true })
+        .in("topic_id", ids)
+        .eq("consolidation_status", "consolidated");
+      return count ?? 0;
+    },
+  });
+
+
   async function run(mode: "structured" | "raw_chunks") {
     if (!selectedQ) { toast.error("Escolha uma pergunta"); return; }
     setBusy(mode);
