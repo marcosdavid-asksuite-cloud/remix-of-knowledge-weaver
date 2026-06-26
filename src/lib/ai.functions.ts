@@ -286,14 +286,15 @@ export const runExtraction = createServerFn({ method: "POST" })
     if (runErr || !run) throw new Error(runErr?.message ?? "Falha ao criar run");
 
     // Aggregation buckets per topic
+    type ExtractionMethod = "regex" | "keyword" | "llm";
     type TopicAggregate = {
       topic_slug: string;
       topic_name: string;
       topic_def_id: string;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      core_fields: Array<{ field_name: string; field_value: any; confidence?: number; source_chunk_ids: string[] }>;
+      core_fields: Array<{ field_name: string; field_value: any; confidence?: number; source_chunk_ids: string[]; extraction_method: ExtractionMethod }>;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      dynamic_fields: Array<{ field_name: string; field_type: string; field_value: any; confidence?: number; source_chunk_ids: string[] }>;
+      dynamic_fields: Array<{ field_name: string; field_type: string; field_value: any; confidence?: number; source_chunk_ids: string[]; extraction_method: ExtractionMethod }>;
 
       additional_information: Array<{ content: string; source_chunk_ids: string[] }>;
     };
@@ -312,6 +313,16 @@ export const runExtraction = createServerFn({ method: "POST" })
     let totalIn = 0, totalOut = 0, totalCost = 0, totalLatency = 0;
     const chunkTopicMap: Record<string, { matched: string[]; via: "alias" | "llm" | "none" }> = {};
     const classifyCalls = { alias: 0, llm: 0, none: 0 };
+    const detStats = {
+      regex_fields: 0,
+      keyword_fields: 0,
+      llm_fields: 0,
+      chunks_skipped_llm: 0,
+      chunks_sent_to_llm: 0,
+      estimated_llm_calls_saved: 0,
+    };
+    const useLlmForDynamic = (settings as { use_llm_for_dynamic?: boolean }).use_llm_for_dynamic ?? true;
+
 
     try {
       for (const chunk of chunks) {
