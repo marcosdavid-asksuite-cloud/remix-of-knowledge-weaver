@@ -88,6 +88,26 @@ export function ExtractionSettingsTab() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">LLM usage</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <label className="flex items-start gap-3 text-sm">
+            <Switch checked={useLlmForDynamic} onCheckedChange={setUseLlmForDynamic} />
+            <span>
+              <span className="font-medium">Use LLM for dynamic fields and additional information</span>
+              <span className="block text-xs text-muted-foreground">
+                Quando desligado, a extração tenta resolver tudo via regex/keyword. A LLM só é chamada
+                para data points não resolvidos cuja estratégia explicitamente exige LLM (hybrid/llm).
+              </span>
+            </span>
+          </label>
+        </CardContent>
+      </Card>
+
+
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">System prompt</CardTitle>
         </CardHeader>
         <CardContent>
