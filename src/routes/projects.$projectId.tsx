@@ -12,6 +12,7 @@ import { QuestionsTab } from "@/features/project/QuestionsTab";
 import { PlaygroundTab } from "@/features/project/PlaygroundTab";
 import { BenchmarkTab } from "@/features/project/BenchmarkTab";
 import { HealthTab } from "@/features/project/HealthTab";
+import { ProjectSummaryCards } from "@/features/project/ProjectSummaryCards";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/projects/$projectId")({
