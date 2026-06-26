@@ -134,8 +134,8 @@ export const callExternalAgent = createServerFn({ method: "POST" })
       inputTokens,
       outputTokens,
       estimatedCost: null,
-      rawResponse: json,
-      requestPayload: payload,
+      rawResponse: json as Json,
+      requestPayload: payload as Json,
       requestHeaders: maskedHeaders,
     };
   });
