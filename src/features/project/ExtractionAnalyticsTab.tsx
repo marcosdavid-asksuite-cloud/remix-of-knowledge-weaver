@@ -330,7 +330,10 @@ export function ExtractionAnalyticsTab({ projectId, initialTopicSlug }: { projec
 
       {/* Dynamic fields */}
       <Card>
-        <CardHeader><CardTitle className="text-base">Dynamic Fields Analysis</CardTitle></CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Dynamic Fields Analysis</CardTitle>
+          <a href="/settings" className="text-xs underline text-muted-foreground">Schema Evolution →</a>
+        </CardHeader>
         <CardContent className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="text-muted-foreground">
