@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "@/integrations/supabase/types";
 import { z } from "zod";
+import { tryDeterministic, type DpdLite } from "./deterministic-extractors";
+
 
 // --------- Pricing table (rough; per 1M tokens, USD) ----------
 const PRICING: Record<string, { in: number; out: number }> = {
