@@ -267,6 +267,42 @@ function topicRelevantSnippet(text: string, topic: TopicLite): string {
     .trim();
 }
 
+// --- Sanity bounds for time-type fields ---
+function timeToMinutes(t: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
+  if (!m) return null;
+  const h = Number(m[1]); const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+// [minHour, maxHour] inclusive — semantics by topic/field name.
+function expectedTimeBounds(topicSlug: string, fieldName: string): [number, number] | null {
+  const n = (fieldName || "").toLowerCase();
+  const s = (topicSlug || "").toLowerCase();
+  if (s.includes("breakfast") || n.includes("breakfast") || n.includes("cafe") || n.includes("café")) return [4, 13];
+  if (n.includes("checkout") || n.includes("check_out") || s.includes("checkout")) return [4, 14];
+  if (n.includes("checkin")  || n.includes("check_in")  || s.includes("checkin"))  return [10, 23];
+  if (n.includes("lunch")    || n.includes("almoco")    || n.includes("almoço"))   return [10, 16];
+  if (n.includes("dinner")   || n.includes("jantar"))                              return [17, 23];
+  if (n.includes("pool")     || s.includes("pool")      || n.includes("piscina"))  return [6, 22];
+  if (n.includes("gym")      || s.includes("gym")       || n.includes("academia")) return [5, 23];
+  if (n.includes("spa")      || s.includes("spa"))                                 return [8, 22];
+  return null;
+}
+function isSaneTime(value: unknown, topicSlug: string, fieldName: string): boolean {
+  if (value == null) return true;
+  const v = typeof value === "string" ? value : (typeof value === "object" ? "" : String(value));
+  const mins = timeToMinutes(v);
+  if (mins == null) return true; // not a HH:MM string — let upstream handle
+  const b = expectedTimeBounds(topicSlug, fieldName);
+  if (!b) return true;
+  const h = mins / 60;
+  return h >= b[0] && h <= b[1];
+}
+function isSaneTimeRange(range: { start: string; end: string }, topicSlug: string, fieldStart: string, fieldEnd: string): boolean {
+  return isSaneTime(range.start, topicSlug, fieldStart) && isSaneTime(range.end, topicSlug, fieldEnd);
+}
+
 async function assertDb<T>(
   op: PromiseLike<{ data: T | null; error: { message: string } | null }>,
   label: string,
