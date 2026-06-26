@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { DataPointsTab } from "@/features/settings/DataPointsTab";
 import { ExtractionSettingsTab } from "@/features/settings/ExtractionSettingsTab";
+import { SchemaEvolutionTab } from "@/features/settings/SchemaEvolutionTab";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings — Hybrid KB Lab" }] }),
@@ -25,12 +26,14 @@ function Settings() {
       <Tabs defaultValue="data_points">
         <TabsList>
           <TabsTrigger value="data_points">Data Points</TabsTrigger>
+          <TabsTrigger value="schema_evolution">Schema Evolution</TabsTrigger>
           <TabsTrigger value="extraction">Extraction</TabsTrigger>
           <TabsTrigger value="prompts">Prompt Templates</TabsTrigger>
           <TabsTrigger value="models">Model Configurations</TabsTrigger>
           <TabsTrigger value="llm">LLM Calls</TabsTrigger>
         </TabsList>
         <TabsContent value="data_points" className="mt-6"><DataPointsTab /></TabsContent>
+        <TabsContent value="schema_evolution" className="mt-6"><SchemaEvolutionTab /></TabsContent>
         <TabsContent value="extraction" className="mt-6"><ExtractionSettingsTab /></TabsContent>
         <TabsContent value="prompts" className="mt-6"><Prompts /></TabsContent>
         <TabsContent value="models" className="mt-6"><Models /></TabsContent>
