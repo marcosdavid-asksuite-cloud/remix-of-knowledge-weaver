@@ -352,15 +352,53 @@ export const runExtraction = createServerFn({ method: "POST" })
           const topic = topicBySlug.get(slug);
           if (!topic) continue;
           const dps = dpdByDefId.get(topic.defId) ?? [];
-          const dpBlock = dps.length === 0
-            ? "(nenhum data point oficial — somente dynamic_fields e additional_information)"
-            : dps.map((d) => `- ${d.field_name} (${d.field_type})${d.description ? `: ${d.description}` : ""}`).join("\n");
+          const bucket = agg.get(slug)!;
+
+          // 3a) Deterministic pass on every DPD (regex/keyword/hybrid).
+          const resolvedCore = new Set<string>();
+          for (const d of dps) {
+            const det = tryDeterministic(d, chunk.content);
+            if (det) {
+              bucket.core_fields.push({
+                field_name: d.field_name,
+                field_value: det.value,
+                confidence: 0.95,
+                source_chunk_ids: [chunk.id],
+                extraction_method: det.method,
+              });
+              resolvedCore.add(d.field_name);
+              if (det.method === "regex") detStats.regex_fields++;
+              else detStats.keyword_fields++;
+            }
+          }
+
+          // 3b) Decide if we need LLM at all for this (chunk, topic).
+          const unresolvedDps = dps.filter((d) => !resolvedCore.has(d.field_name));
+          // Strategies that still want LLM when unresolved: 'hybrid' (no det match) or 'llm'.
+          const unresolvedNeedsLLM = unresolvedDps.filter((d) => {
+            const strat = d.extraction_strategy ?? null;
+            if (strat === "regex" || strat === "keyword") return false; // strict — no LLM fallback
+            return true; // hybrid + llm + null(default text/multi_select → llm)
+          });
+          const needLLM = unresolvedNeedsLLM.length > 0 || useLlmForDynamic;
+
+          if (!needLLM) {
+            detStats.chunks_skipped_llm++;
+            detStats.estimated_llm_calls_saved++;
+            continue;
+          }
+          detStats.chunks_sent_to_llm++;
+
+          // 3c) Build prompt — only list DPs the LLM should still try.
+          const llmDpBlock = unresolvedNeedsLLM.length === 0
+            ? "(todos os data points oficiais já foram preenchidos por regra determinística — extraia somente dynamic_fields e additional_information)"
+            : unresolvedNeedsLLM.map((d) => `- ${d.field_name} (${d.field_type})${d.description ? `: ${d.description}` : ""}`).join("\n");
 
           const userPrompt = renderPrompt(settings.extraction_prompt, {
             topic_slug: topic.slug,
             topic_name: topic.name,
             topic_description: topic.description,
-            data_points: dpBlock,
+            data_points: llmDpBlock,
             chunk: chunk.content,
           });
 
@@ -393,36 +431,43 @@ export const runExtraction = createServerFn({ method: "POST" })
             console.error("Parse fail", topic.slug, chunk.id, e);
           }
 
-          const bucket = agg.get(slug)!;
           const allowedCore = new Set(dps.map((d) => d.field_name));
           for (const f of parsed.core_fields) {
             if (allowedCore.size > 0 && !allowedCore.has(f.field_name)) continue;
             if (isEmptyValue(f.field_value)) continue;
+            if (resolvedCore.has(f.field_name)) continue; // deterministic wins
             bucket.core_fields.push({
               field_name: f.field_name,
               field_value: f.field_value,
               confidence: f.confidence,
               source_chunk_ids: [chunk.id],
+              extraction_method: "llm",
             });
+            detStats.llm_fields++;
           }
-          for (const f of parsed.dynamic_fields) {
-            if (isEmptyValue(f.field_value)) continue;
-            // Dynamic fields must NOT collide with core data point names
-            if (allowedCore.has(f.field_name)) continue;
-            bucket.dynamic_fields.push({
-              field_name: f.field_name,
-              field_type: f.field_type,
-              field_value: f.field_value,
-              confidence: f.confidence,
-              source_chunk_ids: [chunk.id],
-            });
-          }
-          for (const text of parsed.additional_information) {
-            const t = (text ?? "").trim();
-            if (!t) continue;
-            bucket.additional_information.push({ content: t, source_chunk_ids: [chunk.id] });
+          if (useLlmForDynamic) {
+            for (const f of parsed.dynamic_fields) {
+              if (isEmptyValue(f.field_value)) continue;
+              if (allowedCore.has(f.field_name)) continue;
+              bucket.dynamic_fields.push({
+                field_name: f.field_name,
+                field_type: f.field_type,
+                field_value: f.field_value,
+                confidence: f.confidence,
+                source_chunk_ids: [chunk.id],
+                extraction_method: "llm",
+              });
+              detStats.llm_fields++;
+            }
+            for (const text of parsed.additional_information) {
+              const t = (text ?? "").trim();
+              if (!t) continue;
+              bucket.additional_information.push({ content: t, source_chunk_ids: [chunk.id] });
+            }
           }
         }
+      }
+
       }
 
       // Build preview shape
