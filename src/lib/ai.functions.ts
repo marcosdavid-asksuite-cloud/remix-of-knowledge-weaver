@@ -190,6 +190,92 @@ function canonicalValue(v: unknown): string {
   return String(v).trim().toLowerCase();
 }
 
+function toPlainTextValue(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v).trim();
+}
+
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function sentenceSplit(text: string): string[] {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function sentenceMentionsTimePair(sentence: string, start: string, end: string): boolean {
+  const norm = normalizeForMatch(sentence);
+  const [sh, sm] = start.split(":");
+  const [eh, em] = end.split(":");
+  const startHour = String(Number(sh));
+  const endHour = String(Number(eh));
+  const startPatterns = [start, `${startHour}h`, `${startHour}h${sm}`, `${sh}h`, `${sh}h${sm}`].map(normalizeForMatch);
+  const endPatterns = [end, `${endHour}h`, `${endHour}h${em}`, `${eh}h`, `${eh}h${em}`].map(normalizeForMatch);
+  return startPatterns.some((p) => norm.includes(p)) && endPatterns.some((p) => norm.includes(p));
+}
+
+function removeCoreFactsFromAdditionalInfo(
+  text: string,
+  topicSlug: string,
+  coreValues: Map<string, { value: unknown; chunkId: string }>,
+): string {
+  if (!text.trim()) return "";
+  const start = toPlainTextValue(coreValues.get(`${topicSlug}_start_time`)?.value);
+  const end = toPlainTextValue(coreValues.get(`${topicSlug}_end_time`)?.value);
+  const location = toPlainTextValue(coreValues.get(`${topicSlug}_location`)?.value);
+  const price = toPlainTextValue(coreValues.get(`${topicSlug}_price`)?.value);
+  const available = coreValues.get(`${topicSlug}_available`)?.value;
+
+  const cleaned = sentenceSplit(text).filter((sentence) => {
+    const norm = normalizeForMatch(sentence);
+    if (start && end && sentenceMentionsTimePair(sentence, start, end)) return false;
+    if (price && normalizeForMatch(price).length > 1 && norm.includes(normalizeForMatch(price))) return false;
+    if (location) {
+      const loc = normalizeForMatch(location);
+      if (loc.length > 8 && norm.includes(loc)) return false;
+      if (topicSlug === "breakfast" && norm.includes("3o andar") && norm.includes("cafe")) return false;
+    }
+    if (available === true && topicSlug === "breakfast" && /inclus|gratuit|incluid|incluí/.test(norm)) return false;
+    return true;
+  });
+
+  return cleaned.join(" ").trim();
+}
+
+function topicRelevantSnippet(text: string, topic: TopicLite): string {
+  const sentences = sentenceSplit(text);
+  if (sentences.length <= 2) return text;
+
+  const keep = new Set<number>();
+  sentences.forEach((sentence, index) => {
+    if (aliasMatch(sentence, [topic]).length > 0) {
+      keep.add(index);
+      if (index + 1 < sentences.length) keep.add(index + 1);
+    }
+  });
+
+  if (keep.size === 0) return text;
+  return Array.from(keep)
+    .sort((a, b) => a - b)
+    .map((index) => sentences[index])
+    .join(" ")
+    .trim();
+}
+
+async function assertDb<T>(
+  op: PromiseLike<{ data: T | null; error: { message: string } | null }>,
+  label: string,
+): Promise<T | null> {
+  const { data, error } = await op;
+  if (error) throw new Error(`${label}: ${error.message}`);
+  return data;
+}
+
 // ----- Field-name normalization (used to dedupe dynamic vs core) -----
 const PT_STOPWORDS = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "em", "para", "the", "of"]);
 function normalizeFieldKey(s: string): string {
@@ -798,7 +884,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       let inT = 0, outT = 0;
 
       const combinedText = useChunks
-        .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${c.content.slice(0, CHUNK_CHAR_CAP)}`)
+        .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${topicRelevantSnippet(c.content, topic).slice(0, CHUNK_CHAR_CAP)}`)
         .join("\n---\n")
         .slice(0, 14000);
 
@@ -873,6 +959,8 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         console.error("Aggregated extraction LLM call failed", topic.slug, e);
       }
 
+      additionalInfoText = removeCoreFactsFromAdditionalInfo(additionalInfoText, topic.slug, coreValues);
+
       // ---- Persist core fields ----
       const { data: existingFields } = await sb
         .from("knowledge_fields").select("id, field_name, field_origin, approved_by_user")
@@ -891,22 +979,22 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
           field_value: newVal.value,
           field_origin: "core",
           approved_by_user: false,
-          source_of_truth: "ai_extracted",
+          source_of_truth: "auto_single_candidate",
           consolidation_status: "consolidated",
           source_chunk_ids: [newVal.chunkId],
           confidence: 0.85,
         };
         if (ex) {
-          await sb.from("knowledge_fields").update(payload as never).eq("id", ex.id);
+          await assertDb(sb.from("knowledge_fields").update(payload as never).eq("id", ex.id), `Atualizar ${d.field_name}`);
         } else {
-          await sb.from("knowledge_fields").insert(payload as never);
+          await assertDb(sb.from("knowledge_fields").insert(payload as never), `Criar ${d.field_name}`);
         }
       }
 
       // Remove dynamic fields — they should live inside additional_info.
       const dynamicIds = existing.filter((f) => f.field_origin === "dynamic").map((f) => f.id);
       if (dynamicIds.length > 0) {
-        await sb.from("knowledge_fields").delete().in("id", dynamicIds);
+        await assertDb(sb.from("knowledge_fields").delete().in("id", dynamicIds), "Remover campos dinâmicos duplicados");
       }
 
       // ---- Persist additional_info ----
@@ -914,20 +1002,23 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         .from("additional_info").select("id, source_chunk_ids, status").eq("topic_id", topic.topicId);
       const aiAddls = (addls ?? []).filter((a) => (a.source_chunk_ids ?? []).length > 0);
       if (aiAddls.length > 0) {
-        await sb.from("additional_info").update({ status: "rejected" } as never)
-          .in("id", aiAddls.map((a) => a.id));
+        await assertDb(
+          sb.from("additional_info").update({ status: "rejected" } as never)
+            .in("id", aiAddls.map((a) => a.id)),
+          "Arquivar narrativa anterior",
+        );
       }
       if (additionalInfoText.length > 0) {
         const userEdit = (addls ?? []).find(
           (a) => (a.source_chunk_ids ?? []).length === 0 && a.status === "approved",
         );
-        await sb.from("additional_info").insert({
+        await assertDb(sb.from("additional_info").insert({
           topic_id: topic.topicId,
           content: additionalInfoText,
           status: userEdit ? "pending" : "approved",
           source_chunk_ids: usedChunkIds,
           approved_at: userEdit ? null : new Date().toISOString(),
-        } as never);
+        } as never), "Criar narrativa complementar");
       }
 
       result.push({
