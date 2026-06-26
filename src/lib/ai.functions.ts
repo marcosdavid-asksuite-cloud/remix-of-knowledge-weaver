@@ -498,7 +498,9 @@ export const runExtraction = createServerFn({ method: "POST" })
         classify_alias_hits: classifyCalls.alias,
         classify_llm_calls: classifyCalls.llm,
         classify_unmatched: classifyCalls.none,
+        deterministic_extraction: detStats,
       };
+
 
       // ---- Persist mode: write candidates + dedupe into knowledge_fields/additional_info ----
       let persisted = { candidates: 0, knowledge_fields: 0, knowledge_fields_skipped: 0, additional_info: 0 };
