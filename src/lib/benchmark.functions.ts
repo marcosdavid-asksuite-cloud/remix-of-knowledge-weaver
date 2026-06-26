@@ -244,7 +244,7 @@ export const runBenchmark = createServerFn({ method: "POST" })
     } | null = null;
     if (data.externalAgentId) {
       const { data: ea } = await sb.from("external_agents").select("*").eq("id", data.externalAgentId).maybeSingle();
-      if (ea) externalAgent = ea as never;
+      if (ea) externalAgent = ea as unknown as typeof externalAgent;
     }
 
     // Topics for the project.
