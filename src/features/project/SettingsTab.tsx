@@ -1,7 +1,7 @@
 import { ExtractionSettingsTab } from "@/features/settings/ExtractionSettingsTab";
 import { DataPointsTab } from "@/features/settings/DataPointsTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 
 export function SettingsTab() {
   return (
@@ -25,9 +25,7 @@ export function SettingsTab() {
           <ExtractionSettingsTab />
         </TabsContent>
         <TabsContent value="data_points" className="mt-4">
-          <CardContent className="p-0">
-            <DataPointsTab />
-          </CardContent>
+          <DataPointsTab />
         </TabsContent>
       </Tabs>
     </div>
