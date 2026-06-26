@@ -422,6 +422,81 @@ export type Database = {
           },
         ]
       }
+      knowledge_health_snapshots: {
+        Row: {
+          additional_info_count: number
+          approved_ratio: number
+          confidence_score: number
+          core_coverage: number
+          created_at: string
+          dynamic_ratio: number
+          flags: Json
+          health_score: number
+          id: string
+          missing_optional_fields: Json
+          missing_required_fields: Json
+          pending_additional_info_count: number
+          pending_candidates_count: number
+          pending_conflicts_count: number
+          project_id: string
+          required_coverage: number
+          topic_definition_id: string
+        }
+        Insert: {
+          additional_info_count?: number
+          approved_ratio?: number
+          confidence_score?: number
+          core_coverage?: number
+          created_at?: string
+          dynamic_ratio?: number
+          flags?: Json
+          health_score?: number
+          id?: string
+          missing_optional_fields?: Json
+          missing_required_fields?: Json
+          pending_additional_info_count?: number
+          pending_candidates_count?: number
+          pending_conflicts_count?: number
+          project_id: string
+          required_coverage?: number
+          topic_definition_id: string
+        }
+        Update: {
+          additional_info_count?: number
+          approved_ratio?: number
+          confidence_score?: number
+          core_coverage?: number
+          created_at?: string
+          dynamic_ratio?: number
+          flags?: Json
+          health_score?: number
+          id?: string
+          missing_optional_fields?: Json
+          missing_required_fields?: Json
+          pending_additional_info_count?: number
+          pending_candidates_count?: number
+          pending_conflicts_count?: number
+          project_id?: string
+          required_coverage?: number
+          topic_definition_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_health_snapshots_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_health_snapshots_topic_definition_id_fkey"
+            columns: ["topic_definition_id"]
+            isOneToOne: false
+            referencedRelation: "topic_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       llm_calls: {
         Row: {
           created_at: string
