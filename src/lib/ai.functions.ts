@@ -766,8 +766,25 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       const useChunks = classified.slice(0, CHUNK_CAP);
       const usedChunkIds = useChunks.map((c) => c.id);
 
-      // Deterministic pass — first-match wins.
+      // ---- Pair pass: handle *_start_time / *_end_time atomically ----
+      // (a single regex match would otherwise fill BOTH fields with the same first time)
       const coreValues = new Map<string, { value: unknown; chunkId: string }>();
+      const timeStarts = dps.filter((d) => d.field_type === "time" && /(_start_time|_start|_inicio|_inicio_time)$/.test(d.field_name));
+      for (const startDpd of timeStarts) {
+        const base = startDpd.field_name.replace(/(_start_time|_start|_inicio|_inicio_time)$/, "");
+        const endDpd = dps.find((d) => d.field_type === "time" && (d.field_name === `${base}_end_time` || d.field_name === `${base}_end` || d.field_name === `${base}_fim` || d.field_name === `${base}_fim_time`));
+        if (!endDpd) continue;
+        for (const c of useChunks) {
+          const range = extractTimeRange(c.content);
+          if (range) {
+            if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
+            if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
+            break;
+          }
+        }
+      }
+
+      // Per-field deterministic pass — first-match wins.
       for (const c of useChunks) {
         for (const d of dps) {
           if (coreValues.has(d.field_name)) continue;
@@ -788,6 +805,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       const dpList = unresolved.length === 0
         ? "(todos os campos oficiais já foram preenchidos pela camada determinística)"
         : unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
+
 
       const sys = "Você extrai informações estruturadas de textos de hotéis. Responda APENAS com JSON válido. Não invente nada que não esteja no texto. Quando não souber o valor de um campo, omita-o. Para informações úteis que não cabem nos campos oficiais, junte-as em 'additional_info' como texto narrativo bem escrito em português.";
       const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR:\n${dpList}\n\nTEXTOS DISPONÍVEIS (todos referem-se a este tópico):\n${combinedText}\n\nResponda com JSON no formato:\n{\n  "core_fields": { "field_name_1": valor, ... },\n  "additional_info": "texto narrativo opcional com info relevante que não cabe em core_fields (ex.: itens do café, observações). Pode ser vazio."\n}`;
