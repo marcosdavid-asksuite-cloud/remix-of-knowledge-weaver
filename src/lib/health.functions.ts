@@ -33,13 +33,13 @@ export type TopicHealth = {
   consolidated_fields: Array<{
     field_name: string;
     field_label: string;
-    field_value: unknown;
+    field_value: any;
     confidence: number | null;
     source_of_truth: string | null;
   }>;
   dynamic_fields: Array<{
     field_name: string;
-    field_value: unknown;
+    field_value: any;
     confidence: number | null;
     source_of_truth: string | null;
   }>;
@@ -255,12 +255,12 @@ export const calculateKnowledgeHealth = createServerFn({ method: "POST" })
         approved_ratio: t.approved_ratio,
         dynamic_ratio: t.dynamic_ratio,
         additional_info_count: t.additional_info_count,
-        missing_required_fields: t.missing_required_fields as unknown as object,
-        missing_optional_fields: t.missing_optional_fields as unknown as object,
+        missing_required_fields: t.missing_required_fields as any,
+        missing_optional_fields: t.missing_optional_fields as any,
         pending_conflicts_count: t.pending_conflicts_count,
         pending_candidates_count: t.pending_candidates_count,
         pending_additional_info_count: t.pending_additional_info_count,
-        flags: t.flags as unknown as object,
+        flags: t.flags as any,
       }));
       await sb.from("knowledge_health_snapshots").insert(rows);
     }
