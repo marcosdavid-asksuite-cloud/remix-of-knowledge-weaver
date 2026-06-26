@@ -343,6 +343,7 @@ function FieldGroup({
                   </td>
                 )}
                 <td className="py-1 pr-2">{renderValue(f.field_value)}</td>
+                <td className="py-1 pr-2"><MethodBadge m={f.extraction_method} /></td>
                 <td className="py-1 pr-2 text-right text-muted-foreground">
                   {typeof f.confidence === "number" ? `${(f.confidence * 100).toFixed(0)}%` : ""}
                 </td>
