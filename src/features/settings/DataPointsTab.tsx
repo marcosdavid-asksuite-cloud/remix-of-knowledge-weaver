@@ -95,8 +95,15 @@ export function DataPointsTab() {
     },
   });
 
+  const fetchStats = useServerFn(getDataPointStats);
+  const { data: stats } = useQuery({
+    queryKey: ["data-point-stats"],
+    queryFn: () => fetchStats({ data: {} }),
+  });
+
   const currentTopicId =
     selectedTopicId ?? topics?.[0]?.id ?? null;
+
   const currentTopic = topics?.find((t) => t.id === currentTopicId);
   const topicDps = (dps ?? []).filter(
     (d) => d.topic_definition_id === currentTopicId,
