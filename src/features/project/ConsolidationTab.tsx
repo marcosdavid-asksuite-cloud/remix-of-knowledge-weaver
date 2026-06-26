@@ -116,11 +116,6 @@ export function ConsolidationTab({ projectId }: { projectId: string }) {
     for (const t of topics ?? []) m.set(t.topic_definition_id, t);
     return m;
   }, [topics]);
-  const topicById = useMemo(() => {
-    const m = new Map<string, TopicRow>();
-    for (const t of topics ?? []) m.set(t.id, t);
-    return m;
-  }, [topics]);
 
   const { data: candidates } = useQuery({
     queryKey: ["consol_candidates", projectId],

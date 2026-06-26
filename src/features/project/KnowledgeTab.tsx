@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-import { toast } from "sonner";
+
 import { supabase } from "@/integrations/supabase/client";
 import { approveAdditionalInfo, rejectAdditionalInfo } from "@/lib/consolidation.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -303,7 +303,7 @@ export function KnowledgeTab({ projectId }: { projectId: string }) {
         title={sourcesFor?.title ?? ""}
       />
 
-      {(() => { toast; return null; })()}
+      
     </div>
   );
 }
