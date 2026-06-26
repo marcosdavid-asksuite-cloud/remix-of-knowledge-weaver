@@ -1,41 +1,57 @@
-## Causa raiz
+Diagnóstico do problema atual
 
-Em `StructuredKnowledgeTab.tsx` (≈linha 218), o textarea "Informações adicionais" concatena:
-- `additional_info` (texto livre)
-- **+ todo `knowledge_field` com `field_origin = 'dynamic'`** renderizado como `chave: valor`
+O fluxo está correto em conceito, mas a extração estruturada está perdendo informação que existe nos chunks. No projeto atual, o tópico Café da Manhã só tem dois campos extraídos:
 
-A extração (`src/lib/ai.functions.ts`, linha 459) só descarta um dynamic quando o `field_name` é **idêntico** a algum `data_point_definitions.field_name`. Como o LLM gera variantes (`check_in_time` em vez de `checkin_time`, `check out time`, etc.), elas escapam do filtro e viram dynamic — mesmo conceito do core, duplicado. Por isso `check in time: 14:00`, `check out time: 12:00` aparecem em "Informações adicionais" enquanto o core `Horário de check-in` já tem `14:00`.
+- `breakfast_location = "3º andar com linda vista para o mar"` (core)
+- `elevator_availability = false` (dynamic — nem deveria estar aqui)
 
-Itens como `cleaning window`, `trabalha com meia diaria`, `visita gratuita hall` são dynamic legítimos (não têm core equivalente).
+Faltou extrair `breakfast_start_time`, `breakfast_end_time`, `breakfast_available`, `breakfast_price`, `breakfast_diets`. E não há `Informações adicionais` salvas, então a Structured Knowledge responde menos do que a Raw.
 
-## Correções (decisões já aprovadas)
+Causas identificadas:
 
-1. **Auto-promoção para Core**: durante a extração, antes de gravar um dynamic, tentar casar com um `data_point_definitions` do mesmo tópico via:
-   - normalização (`lower`, sem acento, `_`/espaço/`-` colapsados),
-   - match contra `field_name`, `field_label` e cada entrada de `aliases` (jsonb já existente em `data_point_definitions`).
-   Se bater: virar `core_fields` (sujeito ao mesmo "deterministic wins"); senão, permanece dynamic.
+1. A extração processa chunk por chunk e classifica para no máximo um tópico. Quando um chunk tem só parte da informação (ex.: cardápio do café) e outro chunk tem o horário, cada um só preenche o que enxergou e nada consolida o tópico inteiro.
+2. As definições de Data Points para Café da Manhã não têm `keywords` nem `regex_pattern`, então a etapa determinística (regex/keywords) nunca dispara — tudo cai na LLM, que erra por falta de contexto agregado.
+3. Não há fallback para "informações adicionais": quando o LLM extrai narrativa rica (lista de itens do café, observações), isso é descartado em vez de virar `additional_info` aprovada.
+4. A consolidação não popula `additional_info` automaticamente — fica vazio até o usuário escrever.
 
-2. **Limpeza no salvamento do tópico**: quando o usuário clicar "Salvar tópico" no `TopicEditor`, marcar todos os `knowledge_fields` dynamic daquele `topic_id` como rejeitados/excluídos. O textarea passa a ser fonte única do conteúdo não-core.
+Plano de ajuste em 4 passos pequenos
 
-3. **Render inicial do textarea**: parar de concatenar dynamic. Mostrar apenas `additional_info`. Dynamic ainda existentes (ex.: extrações antigas) aparecem na primeira abertura para o usuário ter chance de revisar/manter como texto, mas com um aviso curto "X campos dinâmicos detectados — salve para consolidar".
+Passo 1 — Reforçar extração agregando chunks por tópico
+- Mudar `runExtraction` em `src/lib/ai.functions.ts` para, após classificar chunks por tópico, fazer 1 chamada LLM por tópico passando todos os chunks classificados juntos (não 1 por chunk).
+- Prompt curto e barato: "extraia estes campos JSON a partir do texto abaixo; deixe nulo o que não souber; tudo que sobrar e for relevante coloque em `additional_info` como texto livre."
+- Saída esperada: `{ core_fields: {...}, dynamic_fields: {...}, additional_info: "..." }`.
+- Persistir `additional_info` automaticamente como entrada `status='approved'` (origem `extraction`) em `additional_info` table. O usuário pode editar depois no editor.
+- Resultado: Café da Manhã ganha horário, incluso, lista de itens vai para Informações adicionais.
 
-## Mudanças por arquivo
+Passo 2 — Adicionar keywords/regex padrão aos tópicos hoteleiros
+- Atualizar `data_point_definitions` via migração para preencher `keywords` e `regex_pattern` faltantes nos campos óbvios:
+  - `breakfast_start_time` / `breakfast_end_time`: regex de horário `\b(\d{1,2})[h:](\d{0,2})?\b`, keywords `["café da manhã","breakfast"]`.
+  - `breakfast_available`: keywords `["incluso","incluído","grátis","gratuito"]`.
+  - `checkin_time` / `checkout_time`: regex de horário com keywords `["check-in","check in","checkin"]` e `["check-out","checkout"]`.
+  - `wifi_available`, `parking_available`, `pool_available`, `pets_allowed`: keywords e regra booleana.
+- Roda determinístico antes da LLM. Reduz custo e melhora cobertura.
 
-**`src/lib/ai.functions.ts`** (extração)
-- Criar `normalizeFieldName(s)` helper.
-- Construir índice por tópico: `{ normalized -> dpd.field_name }` cobrindo `field_name`, `field_label`, `aliases[]`.
-- No loop dynamic (linha 456-469): se o nome normalizado bater, empurrar para `bucket.core_fields` em vez de `dynamic_fields` (respeitando `resolvedCore` e `allowedCore`).
-- Mesma normalização aplicada no loop `core_fields` (linha 443) para tolerar variações no nome devolvido pelo LLM e gravar com o `field_name` canônico.
+Passo 3 — Limpar falsos dinâmicos
+- No pipeline, descartar campos dinâmicos cujo `field_name` claramente pertence a outro tópico (ex.: `elevator_availability` no tópico Café da Manhã). Regra simples: se o nome não combina nem com o slug do tópico nem com aliases conhecidos, mover para `additional_info` em vez de salvar como `knowledge_field` dinâmico.
 
-**`src/features/project/StructuredKnowledgeTab.tsx`** (UI)
-- No `useEffect` que monta `addlText`: remover o trecho `dynamicLines`. Mostrar só `addls`. Se existirem dynamic, montar uma linha de aviso (não persistente) acima do textarea.
-- Em `save()`: após processar `additional_info`, deletar (ou marcar `approved_by_user=false` + `consolidation_status='rejected'`) todos os `knowledge_fields` com `topic_id = topic.id` e `field_origin = 'dynamic'`. Decisão: **deletar** (mais limpo; nenhuma outra tela depende deles agora que Consolidation/Analytics estão escondidos).
-- Invalidate queries `sk_fields` para a UI refletir.
+Passo 4 — Reextração sob demanda + indicador na UI
+- Botão "Re-extrair tópico" no card de cada tópico em `StructuredKnowledgeTab.tsx`. Dispara o Passo 1 só para aquele tópico, usando todos os chunks já classificados.
+- Mostrar `Cobertura: X/Y campos preenchidos` no header do tópico para deixar visível onde a extração ficou fraca.
+- Botão "Re-extrair tudo" no topo da aba.
 
-**Backfill opcional (uma vez)** via `supabase--insert`:
-- Para cada `knowledge_fields.field_origin='dynamic'` cujo nome normalizado bate com algum `data_point_definitions` ativo do tópico, converter para `core` (preencher o core só se ainda estiver vazio); caso contrário, deletar. Isso limpa a base existente do projeto.
+Sem mudanças
 
-## Fora de escopo
+- Compare Responses continua igual (2 chamadas LLM reais lado a lado). O que vai melhorar é a base estruturada, então a resposta dela passará a ter horário + incluso + itens, e o experimento passa a ser justo.
+- Configuração de provider/modelo/chave externa (OpenAI, OpenRouter, etc.) já existe na aba Compare Responses e atende sua exigência.
 
-- Nenhuma mudança em `consolidation.functions.ts`, schema, ou outras abas.
-- Sem alterar prompts do LLM (a normalização no pós-processamento já resolve sem custo extra).
+Arquivos afetados
+
+- `src/lib/ai.functions.ts` — novo modo de extração agregada por tópico, persistência de `additional_info` automática, filtro de dinâmicos.
+- `src/features/project/StructuredKnowledgeTab.tsx` — botões de re-extrair e badge de cobertura.
+- `src/lib/llm-providers.functions.ts` — sem mudanças.
+- Migração SQL — preencher `keywords` e `regex_pattern` para os tópicos hoteleiros principais.
+
+Resultado esperado
+
+- Café da Manhã passará a mostrar horário 07:00–10:00, incluso = sim, local = 3º andar, e a Informações adicionais virá pré-preenchida com a lista de itens.
+- Comparação Raw vs Structured passa a ser justa, e Structured deve ficar igual ou melhor em qualidade e bem melhor em latência/tokens.
