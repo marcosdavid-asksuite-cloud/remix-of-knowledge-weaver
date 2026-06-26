@@ -174,6 +174,7 @@ export function DataPointsTab() {
                   <th className="py-2 pr-3">Label</th>
                   <th className="py-2 pr-3">Field</th>
                   <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Strategy</th>
                   <th className="py-2 pr-3">Required</th>
                   <th className="py-2 pr-3">Active</th>
                   <th></th>
@@ -189,6 +190,11 @@ export function DataPointsTab() {
                     <td className="py-2 pr-3">
                       <Badge variant="secondary" className="text-[10px]">
                         {d.field_type}
+                      </Badge>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <Badge variant="outline" className="text-[10px]">
+                        {d.extraction_strategy}
                       </Badge>
                     </td>
                     <td className="py-2 pr-3">
