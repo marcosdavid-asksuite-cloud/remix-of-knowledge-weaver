@@ -233,6 +233,11 @@ export function DataPointsTab() {
                         }}
                       />
                     </td>
+                    <td className="py-2 pr-3 tabular-nums text-xs">{s?.candidates ?? 0}</td>
+                    <td className="py-2 pr-3 tabular-nums text-xs">{s?.consolidated ?? 0}</td>
+                    <td className="py-2 pr-3 tabular-nums text-xs">
+                      {s?.avg_confidence != null ? s.avg_confidence.toFixed(2) : "—"}
+                    </td>
                     <td className="py-2 pr-3 text-right">
                       <div className="flex justify-end gap-1">
                         <EditDialog
@@ -263,7 +268,9 @@ export function DataPointsTab() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
+
               </tbody>
             </table>
           )}
