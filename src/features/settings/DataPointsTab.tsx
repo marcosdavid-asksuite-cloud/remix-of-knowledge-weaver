@@ -368,6 +368,7 @@ function EditDialog({
                 </option>
               ))}
             </select>
+          </div>
           <div>
             <Label>Estratégia de extração</Label>
             <select
