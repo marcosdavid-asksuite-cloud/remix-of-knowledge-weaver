@@ -163,6 +163,106 @@ export type Database = {
           },
         ]
       }
+      extraction_settings: {
+        Row: {
+          chunk_size: number
+          extraction_prompt: string
+          id: string
+          max_chunks: number
+          singleton: boolean
+          system_prompt: string
+          temperature: number
+          updated_at: string
+        }
+        Insert: {
+          chunk_size?: number
+          extraction_prompt: string
+          id?: string
+          max_chunks?: number
+          singleton?: boolean
+          system_prompt: string
+          temperature?: number
+          updated_at?: string
+        }
+        Update: {
+          chunk_size?: number
+          extraction_prompt?: string
+          id?: string
+          max_chunks?: number
+          singleton?: boolean
+          system_prompt?: string
+          temperature?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      knowledge_candidates: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          extraction_run_id: string | null
+          field_name: string
+          field_origin: string
+          field_type: string
+          field_value: Json | null
+          id: string
+          project_id: string
+          source_chunk_ids: string[]
+          status: string
+          topic_definition_id: string
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          extraction_run_id?: string | null
+          field_name: string
+          field_origin: string
+          field_type: string
+          field_value?: Json | null
+          id?: string
+          project_id: string
+          source_chunk_ids?: string[]
+          status?: string
+          topic_definition_id: string
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          extraction_run_id?: string | null
+          field_name?: string
+          field_origin?: string
+          field_type?: string
+          field_value?: Json | null
+          id?: string
+          project_id?: string
+          source_chunk_ids?: string[]
+          status?: string
+          topic_definition_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_candidates_extraction_run_id_fkey"
+            columns: ["extraction_run_id"]
+            isOneToOne: false
+            referencedRelation: "extraction_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_candidates_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_candidates_topic_definition_id_fkey"
+            columns: ["topic_definition_id"]
+            isOneToOne: false
+            referencedRelation: "topic_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       knowledge_fields: {
         Row: {
           confidence: number | null
