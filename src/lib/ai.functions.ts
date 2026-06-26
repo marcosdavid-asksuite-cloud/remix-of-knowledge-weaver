@@ -995,6 +995,8 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
             const canonical = resolve(name);
             if (!canonical) continue;
             if (coreValues.has(canonical)) continue;
+            // Sanity check: drop nonsensical time values (e.g. café da manhã 20:00).
+            if (dpTypeByName.get(canonical) === "time" && !isSaneTime(val, topic.slug, canonical)) continue;
             coreValues.set(canonical, { value: val, chunkId: usedChunkIds[0] });
           }
           if (typeof parsed.additional_info === "string") {
