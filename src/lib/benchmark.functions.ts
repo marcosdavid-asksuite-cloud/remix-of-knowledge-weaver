@@ -68,7 +68,7 @@ async function callGateway(opts: {
   };
 }
 
-type Mode = "raw_chunks" | "structured" | "structured_only";
+type Mode = "raw_chunks" | "structured" | "structured_only" | "external_agent";
 
 type TopicLite = {
   id: string;
@@ -213,6 +213,7 @@ export const runBenchmark = createServerFn({ method: "POST" })
     temperature?: number;
     maxRawChunks?: number;
     includeAdditional?: boolean;
+    externalAgentId?: string;
   }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
