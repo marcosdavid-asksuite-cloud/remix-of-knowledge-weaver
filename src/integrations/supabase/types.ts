@@ -114,6 +114,112 @@ export type Database = {
           },
         ]
       }
+      experiment_snapshots: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          name: string
+          overall_score: number | null
+          payload: Json
+          project_id: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name: string
+          overall_score?: number | null
+          payload: Json
+          project_id: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          name?: string
+          overall_score?: number | null
+          payload?: Json
+          project_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "experiment_snapshots_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      external_agents: {
+        Row: {
+          active: boolean
+          api_key: string | null
+          auth_header_name: string | null
+          auth_type: string
+          context_options: Json
+          created_at: string
+          custom_headers: Json
+          endpoint: string
+          id: string
+          model: string | null
+          name: string
+          payload_template: Json | null
+          project_id: string | null
+          response_path: string | null
+          temperature: number | null
+          timeout_ms: number | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          api_key?: string | null
+          auth_header_name?: string | null
+          auth_type?: string
+          context_options?: Json
+          created_at?: string
+          custom_headers?: Json
+          endpoint: string
+          id?: string
+          model?: string | null
+          name: string
+          payload_template?: Json | null
+          project_id?: string | null
+          response_path?: string | null
+          temperature?: number | null
+          timeout_ms?: number | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          api_key?: string | null
+          auth_header_name?: string | null
+          auth_type?: string
+          context_options?: Json
+          created_at?: string
+          custom_headers?: Json
+          endpoint?: string
+          id?: string
+          model?: string | null
+          name?: string
+          payload_template?: Json | null
+          project_id?: string | null
+          response_path?: string | null
+          temperature?: number | null
+          timeout_ms?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "external_agents_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       extraction_runs: {
         Row: {
           created_at: string
@@ -493,6 +599,38 @@ export type Database = {
             columns: ["topic_definition_id"]
             isOneToOne: false
             referencedRelation: "topic_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      lab_settings: {
+        Row: {
+          created_at: string
+          id: string
+          project_id: string
+          settings: Json
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          project_id: string
+          settings?: Json
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          project_id?: string
+          settings?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "lab_settings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: true
+            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]
@@ -921,6 +1059,7 @@ export type Database = {
           created_at: string
           error_message: string | null
           estimated_cost: number | null
+          external_agent_id: string | null
           human_notes: string | null
           human_score: number | null
           id: string
@@ -934,6 +1073,7 @@ export type Database = {
           project_id: string | null
           prompt_template_id: string | null
           question_id: string
+          request_payload: Json | null
           status: string
           test_batch_id: string | null
         }
@@ -943,6 +1083,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           estimated_cost?: number | null
+          external_agent_id?: string | null
           human_notes?: string | null
           human_score?: number | null
           id?: string
@@ -956,6 +1097,7 @@ export type Database = {
           project_id?: string | null
           prompt_template_id?: string | null
           question_id: string
+          request_payload?: Json | null
           status?: string
           test_batch_id?: string | null
         }
@@ -965,6 +1107,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           estimated_cost?: number | null
+          external_agent_id?: string | null
           human_notes?: string | null
           human_score?: number | null
           id?: string
@@ -978,10 +1121,18 @@ export type Database = {
           project_id?: string | null
           prompt_template_id?: string | null
           question_id?: string
+          request_payload?: Json | null
           status?: string
           test_batch_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "test_runs_external_agent_id_fkey"
+            columns: ["external_agent_id"]
+            isOneToOne: false
+            referencedRelation: "external_agents"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "test_runs_llm_call_id_fkey"
             columns: ["llm_call_id"]

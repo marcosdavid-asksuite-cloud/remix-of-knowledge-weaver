@@ -10,17 +10,19 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-type Mode = "raw_chunks" | "structured" | "structured_only";
-const ALL_MODES: Mode[] = ["raw_chunks", "structured", "structured_only"];
+type Mode = "raw_chunks" | "structured" | "structured_only" | "external_agent";
+const ALL_MODES: Mode[] = ["raw_chunks", "structured", "structured_only", "external_agent"];
 const MODE_LABEL: Record<Mode, string> = {
   raw_chunks: "Raw chunks",
   structured: "Structured (+addl)",
   structured_only: "Structured only",
+  external_agent: "External Agent",
 };
 const MODE_COLOR: Record<Mode, string> = {
   raw_chunks: "border-amber-500/40 bg-amber-500/5",
   structured: "border-emerald-500/40 bg-emerald-500/5",
   structured_only: "border-sky-500/40 bg-sky-500/5",
+  external_agent: "border-violet-500/40 bg-violet-500/5",
 };
 
 type TestRun = {
@@ -54,15 +56,25 @@ type TestEval = {
 export function BenchmarkTab({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const runFn = useServerFn(runBenchmark);
-  const [selectedModes, setSelectedModes] = useState<Mode[]>([...ALL_MODES]);
+  const [selectedModes, setSelectedModes] = useState<Mode[]>(["raw_chunks", "structured", "structured_only"]);
   const [questionLimit, setQuestionLimit] = useState<string>("");
   const [maxChunks, setMaxChunks] = useState<string>("20");
   const [temperature, setTemperature] = useState<string>("");
   const [modelOverride, setModelOverride] = useState<string>("");
   const [includeAddl, setIncludeAddl] = useState<boolean>(true);
   const [batchName, setBatchName] = useState<string>("");
+  const [externalAgentId, setExternalAgentId] = useState<string>("");
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const { data: agents } = useQuery({
+    queryKey: ["external-agents-bench", projectId],
+    queryFn: async () => {
+      const { data } = await supabase.from("external_agents").select("id, name, model")
+        .or(`project_id.eq.${projectId},project_id.is.null`).eq("active", true);
+      return data ?? [];
+    },
+  });
 
   const { data: questions } = useQuery({
     queryKey: ["test_questions", projectId],
@@ -135,6 +147,9 @@ export function BenchmarkTab({ projectId }: { projectId: string }) {
   async function startRun() {
     if (selectedModes.length === 0) { toast.error("Selecione ao menos um modo"); return; }
     if (activeQs.length === 0) { toast.error("Sem perguntas ativas"); return; }
+    if (selectedModes.includes("external_agent") && !externalAgentId) {
+      toast.error("Selecione um External Agent"); return;
+    }
     const limit = questionLimit ? Math.max(1, parseInt(questionLimit, 10)) : activeQs.length;
     const ids = activeQs.slice(0, limit).map((q) => q.id);
     setBusy(true);
@@ -149,6 +164,7 @@ export function BenchmarkTab({ projectId }: { projectId: string }) {
           temperature: temperature ? Number(temperature) : undefined,
           maxRawChunks: maxChunks ? parseInt(maxChunks, 10) : undefined,
           includeAdditional: includeAddl,
+          externalAgentId: externalAgentId || undefined,
         },
       });
       toast.success(`Benchmark concluído. ${res.statistics.successes}/${res.statistics.total_runs} runs.`);
@@ -282,6 +298,19 @@ export function BenchmarkTab({ projectId }: { projectId: string }) {
             <div>
               <label className="mb-1 block text-xs text-muted-foreground">Max chunks (raw_chunks)</label>
               <Input value={maxChunks} onChange={(e) => setMaxChunks(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">External Agent</label>
+              <select
+                className="w-full rounded border bg-background px-2 py-1.5 text-sm"
+                value={externalAgentId}
+                onChange={(e) => setExternalAgentId(e.target.value)}
+              >
+                <option value="">— (necessário para modo external_agent) —</option>
+                {(agents ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.model ?? "?"})</option>
+                ))}
+              </select>
             </div>
             <div className="flex items-end gap-2">
               <label className="flex items-center gap-2 text-xs">

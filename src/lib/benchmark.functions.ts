@@ -68,7 +68,7 @@ async function callGateway(opts: {
   };
 }
 
-type Mode = "raw_chunks" | "structured" | "structured_only";
+type Mode = "raw_chunks" | "structured" | "structured_only" | "external_agent";
 
 type TopicLite = {
   id: string;
@@ -203,6 +203,93 @@ async function buildStructuredContext(
   };
 }
 
+type ExternalAgentRow = {
+  id: string; name: string; endpoint: string; auth_type: string;
+  auth_header_name: string | null; api_key: string | null;
+  custom_headers: Record<string, string> | null; model: string | null;
+  temperature: number | null; timeout_ms: number | null;
+  payload_template: unknown; response_path: string | null;
+  context_options: { structured?: boolean; additional?: boolean; raw_chunks?: boolean } | null;
+};
+
+function getByPath(obj: unknown, path: string): unknown {
+  if (!path) return obj;
+  return path.split(".").reduce<unknown>((acc, key) => {
+    if (acc == null) return undefined;
+    const k = /^\d+$/.test(key) ? Number(key) : key;
+    return (acc as Record<string | number, unknown>)[k];
+  }, obj);
+}
+
+async function callExternalAgentInline(
+  agent: ExternalAgentRow,
+  question: string,
+  context: string,
+): Promise<{ content: string; inputTokens: number | null; outputTokens: number | null; latency: number; requestPayload: unknown }> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    ...(agent.custom_headers ?? {}),
+  };
+  if (agent.auth_type === "bearer" && agent.api_key) headers["Authorization"] = `Bearer ${agent.api_key}`;
+  else if (agent.auth_type === "header" && agent.auth_header_name && agent.api_key) headers[agent.auth_header_name] = agent.api_key;
+
+  const system = "Responda somente com base no contexto fornecido. Não invente.";
+  const userContent = `Pergunta:\n${question}\n\nContexto:\n${context}`;
+
+  let payload: unknown;
+  if (agent.payload_template) {
+    const tpl = JSON.stringify(agent.payload_template);
+    payload = JSON.parse(
+      tpl
+        .replace(/\{\{question\}\}/g, JSON.stringify(question).slice(1, -1))
+        .replace(/\{\{context\}\}/g, JSON.stringify(context).slice(1, -1))
+        .replace(/\{\{system\}\}/g, JSON.stringify(system).slice(1, -1))
+        .replace(/\{\{model\}\}/g, agent.model ?? "")
+        .replace(/\{\{temperature\}\}/g, String(agent.temperature ?? 0.2)),
+    );
+  } else {
+    payload = {
+      model: agent.model,
+      temperature: Number(agent.temperature ?? 0.2),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
+    };
+  }
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), agent.timeout_ms ?? 30000);
+  const t0 = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(agent.endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
+  const latency = Date.now() - t0;
+  const text = await res.text();
+  let json: unknown;
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok) throw new Error(`Agente externo ${res.status}: ${text.slice(0, 300)}`);
+  const path = agent.response_path ?? "choices.0.message.content";
+  const extracted = getByPath(json, path);
+  const content = typeof extracted === "string" ? extracted : JSON.stringify(extracted ?? json).slice(0, 4000);
+  const usage = (json as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
+  return {
+    content,
+    inputTokens: usage?.prompt_tokens ?? null,
+    outputTokens: usage?.completion_tokens ?? null,
+    latency,
+    requestPayload: payload,
+  };
+}
+
 export const runBenchmark = createServerFn({ method: "POST" })
   .inputValidator((input: {
     projectId: string;
@@ -213,11 +300,15 @@ export const runBenchmark = createServerFn({ method: "POST" })
     temperature?: number;
     maxRawChunks?: number;
     includeAdditional?: boolean;
+    externalAgentId?: string;
   }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
     if (data.modes.length === 0) throw new Error("Selecione ao menos um modo.");
     if (data.questionIds.length === 0) throw new Error("Selecione ao menos uma pergunta.");
+    if (data.modes.includes("external_agent") && !data.externalAgentId) {
+      throw new Error("Selecione um External Agent para o modo external_agent.");
+    }
 
     // Resolve model config (active) — let user override model + temperature.
     const { data: modelCfg } = await sb
@@ -228,6 +319,13 @@ export const runBenchmark = createServerFn({ method: "POST" })
     const temperature = data.temperature ?? Number(modelCfg.temperature);
     const maxRawChunks = Math.max(1, Math.min(80, data.maxRawChunks ?? 20));
     const includeAdditional = data.includeAdditional ?? true;
+
+    // Load external agent if needed
+    let externalAgent: ExternalAgentRow | null = null;
+    if (data.externalAgentId) {
+      const { data: ea } = await sb.from("external_agents").select("*").eq("id", data.externalAgentId).maybeSingle();
+      if (ea) externalAgent = ea as unknown as ExternalAgentRow;
+    }
 
     // Topics for the project.
     const { data: topicsRaw } = await sb
@@ -293,8 +391,25 @@ export const runBenchmark = createServerFn({ method: "POST" })
               context = await buildRawChunksContext(sb, data.projectId, q.question, useTopics, maxRawChunks);
             } else if (mode === "structured") {
               context = await buildStructuredContext(sb, useTopics, true);
-            } else {
+            } else if (mode === "structured_only") {
               context = await buildStructuredContext(sb, useTopics, false);
+            } else {
+              // external_agent — build context based on agent options
+              const agent = externalAgent as { context_options: { structured?: boolean; additional?: boolean; raw_chunks?: boolean } } | null;
+              const co = agent?.context_options ?? {};
+              const parts: string[] = [];
+              const meta: Record<string, unknown> = {};
+              if (co.structured !== false) {
+                const s = await buildStructuredContext(sb, useTopics, co.additional !== false);
+                parts.push(s.text);
+                Object.assign(meta, { structured: s.meta });
+              }
+              if (co.raw_chunks === true) {
+                const r = await buildRawChunksContext(sb, data.projectId, q.question, useTopics, maxRawChunks);
+                parts.push(r.text);
+                Object.assign(meta, { raw: r.meta });
+              }
+              context = { text: parts.join("\n\n---\n\n") || "(sem contexto)", meta };
             }
           } catch (e) {
             await sb.from("test_runs").insert({
@@ -313,14 +428,31 @@ export const runBenchmark = createServerFn({ method: "POST" })
 
           try {
             const userPrompt = buildPrompt(q.question, context.text);
-            const res = await callGateway({
-              model,
-              temperature,
-              maxTokens: modelCfg.max_tokens,
-              system: ANSWER_SYSTEM_PROMPT,
-              user: userPrompt,
-            });
-            const cost = estimateCost(model, res.inputTokens, res.outputTokens);
+            let res: { content: string; inputTokens: number; outputTokens: number; latency: number };
+            let runModelName = model;
+            let requestPayload: unknown = null;
+
+            if (mode === "external_agent" && externalAgent) {
+              const ext = await callExternalAgentInline(externalAgent, q.question, context.text);
+              res = {
+                content: ext.content,
+                inputTokens: ext.inputTokens ?? 0,
+                outputTokens: ext.outputTokens ?? 0,
+                latency: ext.latency,
+              };
+              runModelName = externalAgent.model ?? externalAgent.name;
+              requestPayload = ext.requestPayload;
+            } else {
+              res = await callGateway({
+                model,
+                temperature,
+                maxTokens: modelCfg.max_tokens,
+                system: ANSWER_SYSTEM_PROMPT,
+                user: userPrompt,
+              });
+            }
+
+            const cost = mode === "external_agent" ? 0 : estimateCost(model, res.inputTokens, res.outputTokens);
             await sb.from("test_runs").insert({
               question_id: q.id,
               project_id: data.projectId,
@@ -332,13 +464,15 @@ export const runBenchmark = createServerFn({ method: "POST" })
               output_tokens: res.outputTokens,
               estimated_cost: cost,
               latency_ms: res.latency,
-              model_name: model,
+              model_name: runModelName,
               status: "success",
-              model_configuration_id: modelCfg.id,
+              model_configuration_id: mode === "external_agent" ? null : modelCfg.id,
+              external_agent_id: mode === "external_agent" ? externalAgent?.id ?? null : null,
+              request_payload: requestPayload as never,
             });
             await sb.from("llm_calls").insert({
               prompt_type: `benchmark:${mode}`,
-              model_name: model,
+              model_name: runModelName,
               input_tokens: res.inputTokens,
               output_tokens: res.outputTokens,
               latency: res.latency,
