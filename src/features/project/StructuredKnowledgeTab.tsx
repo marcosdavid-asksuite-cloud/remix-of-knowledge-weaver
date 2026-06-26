@@ -222,8 +222,31 @@ function TopicEditor({
   const [coreBooleans, setCoreBooleans] = useState<Record<string, boolean>>({});
   const [addlText, setAddlText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [reextracting, setReextracting] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+
+  const coreFilled = dpds.filter((d) => fields.some((f) => f.field_name === d.field_name && f.field_origin === "core" && f.field_value != null && f.field_value !== "")).length;
+
+  async function reextract() {
+    setReextracting(true);
+    try {
+      const res = await extractTopicAggregated({ data: { projectId, topicSlug: slug } });
+      const r = res.topics[0];
+      if (r) {
+        toast.success(`Re-extraído: ${r.core_filled}/${r.core_total} campos · ${r.chunks_used} chunks · +${r.additional_info_chars} chars de narrativa`);
+      } else {
+        toast.message("Re-extração concluída");
+      }
+      qc.invalidateQueries({ queryKey: ["sk_fields", projectId] });
+      qc.invalidateQueries({ queryKey: ["sk_addls", projectId] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReextracting(false);
+    }
+  }
+
 
   useEffect(() => {
     const initStr: Record<string, string> = {};
