@@ -220,10 +220,16 @@ export const runExtraction = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
 
-    const { data: chunksRaw } = await sb
+    let chunkQuery = sb
       .from("raw_chunks").select("id, content").in("raw_source_id", sourceIds).order("position");
+    if (data.chunkIds && data.chunkIds.length > 0) {
+      chunkQuery = sb
+        .from("raw_chunks").select("id, content").in("id", data.chunkIds).order("position");
+    }
+    const { data: chunksRaw } = await chunkQuery;
     const allChunks = chunksRaw ?? [];
-    const chunks = allChunks.slice(0, settings.max_chunks);
+    const chunks = data.chunkIds && data.chunkIds.length > 0 ? allChunks : allChunks.slice(0, settings.max_chunks);
+
     if (chunks.length === 0) throw new Error("Nenhum chunk encontrado.");
 
     // Topics in this project (with definitions + aliases)
