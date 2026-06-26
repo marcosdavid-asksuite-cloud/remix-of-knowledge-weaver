@@ -87,6 +87,13 @@ export function PlaygroundTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-6">
+      {consolidatedCount === 0 && (
+        <div className="rounded border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
+          <strong>No consolidated knowledge found.</strong> O modo <code>structured</code> usa
+          apenas KnowledgeFields consolidados e AdditionalInfo aprovadas — rode a
+          consolidação na aba <strong>Consolidation</strong> primeiro.
+        </div>
+      )}
       <Card>
         <CardHeader><CardTitle className="text-base">Pergunta</CardTitle></CardHeader>
         <CardContent>
