@@ -190,6 +190,31 @@ function canonicalValue(v: unknown): string {
   return String(v).trim().toLowerCase();
 }
 
+// ----- Field-name normalization (used to dedupe dynamic vs core) -----
+const PT_STOPWORDS = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "em", "para", "the", "of"]);
+function normalizeFieldKey(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+function tokensFieldKey(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t && !PT_STOPWORDS.has(t))
+    .join("");
+}
+function fieldKeyVariants(s: string): string[] {
+  const set = new Set<string>();
+  const n = normalizeFieldKey(s);
+  const t = tokensFieldKey(s);
+  if (n) set.add(n);
+  if (t) set.add(t);
+  return Array.from(set);
+}
+
 // =====================================================
 // runExtraction (Etapa 2 — DataPoint-aware)
 // =====================================================
@@ -440,12 +465,28 @@ export const runExtraction = createServerFn({ method: "POST" })
           }
 
           const allowedCore = new Set(dps.map((d) => d.field_name));
+          // Build alias index: normalized variant -> canonical field_name
+          const coreAlias = new Map<string, string>();
+          for (const d of dps) {
+            for (const v of fieldKeyVariants(d.field_name)) coreAlias.set(v, d.field_name);
+            for (const v of fieldKeyVariants(d.field_label)) coreAlias.set(v, d.field_name);
+          }
+          const resolveToCore = (name: string): string | null => {
+            if (allowedCore.has(name)) return name;
+            for (const v of fieldKeyVariants(name)) {
+              const hit = coreAlias.get(v);
+              if (hit) return hit;
+            }
+            return null;
+          };
+
           for (const f of parsed.core_fields) {
-            if (allowedCore.size > 0 && !allowedCore.has(f.field_name)) continue;
             if (isEmptyValue(f.field_value)) continue;
-            if (resolvedCore.has(f.field_name)) continue; // deterministic wins
+            const canonical = resolveToCore(f.field_name);
+            if (!canonical) continue;
+            if (resolvedCore.has(canonical)) continue; // deterministic wins
             bucket.core_fields.push({
-              field_name: f.field_name,
+              field_name: canonical,
               field_value: f.field_value,
               confidence: f.confidence,
               source_chunk_ids: [chunk.id],
@@ -456,7 +497,21 @@ export const runExtraction = createServerFn({ method: "POST" })
           if (useLlmForDynamic) {
             for (const f of parsed.dynamic_fields) {
               if (isEmptyValue(f.field_value)) continue;
-              if (allowedCore.has(f.field_name)) continue;
+              // If the dynamic name matches a core field (exact or via normalized variants), promote to core.
+              const canonical = resolveToCore(f.field_name);
+              if (canonical) {
+                if (resolvedCore.has(canonical)) continue;
+                if (bucket.core_fields.some((c) => c.field_name === canonical && c.source_chunk_ids[0] === chunk.id)) continue;
+                bucket.core_fields.push({
+                  field_name: canonical,
+                  field_value: f.field_value,
+                  confidence: f.confidence,
+                  source_chunk_ids: [chunk.id],
+                  extraction_method: "llm",
+                });
+                detStats.llm_fields++;
+                continue;
+              }
               bucket.dynamic_fields.push({
                 field_name: f.field_name,
                 field_type: f.field_type,
