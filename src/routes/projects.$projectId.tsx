@@ -76,8 +76,12 @@ function ProjectDetail() {
           <TabsTrigger value="questions">Questions</TabsTrigger>
           <TabsTrigger value="playground">Playground</TabsTrigger>
           <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
+          <TabsTrigger value="external-agent">External Agent</TabsTrigger>
           <TabsTrigger value="health">Health</TabsTrigger>
           <TabsTrigger value="analytics">Extraction Analytics</TabsTrigger>
+          <TabsTrigger value="report">Executive Report</TabsTrigger>
+          <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
+          <TabsTrigger value="lab">Lab Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="sources" className="mt-6"><SourcesTab projectId={projectId} /></TabsContent>
         <TabsContent value="topics" className="mt-6"><TopicsTab projectId={projectId} /></TabsContent>
@@ -87,8 +91,12 @@ function ProjectDetail() {
         <TabsContent value="questions" className="mt-6"><QuestionsTab projectId={projectId} /></TabsContent>
         <TabsContent value="playground" className="mt-6"><PlaygroundTab projectId={projectId} /></TabsContent>
         <TabsContent value="benchmark" className="mt-6"><BenchmarkTab projectId={projectId} /></TabsContent>
+        <TabsContent value="external-agent" className="mt-6"><ExternalAgentTab projectId={projectId} /></TabsContent>
         <TabsContent value="health" className="mt-6"><HealthTab projectId={projectId} /></TabsContent>
         <TabsContent value="analytics" className="mt-6"><ExtractionAnalyticsTab projectId={projectId} initialTopicSlug={topic} /></TabsContent>
+        <TabsContent value="report" className="mt-6"><ExecutiveReportTab projectId={projectId} /></TabsContent>
+        <TabsContent value="snapshots" className="mt-6"><SnapshotsTab projectId={projectId} /></TabsContent>
+        <TabsContent value="lab" className="mt-6"><LabSettingsTab projectId={projectId} /></TabsContent>
       </Tabs>
     </AppShell>
   );
