@@ -934,18 +934,25 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         : unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
 
 
+      const dpTypeByName = new Map(dps.map((d) => [d.field_name, d.field_type]));
+
       const sys = [
         "Você extrai informações estruturadas de textos de hotéis em pt-BR. Responda APENAS com JSON válido.",
         "REGRAS:",
-        "1. Use SOMENTE informações presentes nos textos. Não invente nada.",
-        "2. Sempre prefira preencher os campos oficiais (core_fields). Só coloque algo em additional_info se NÃO COUBER em nenhum campo.",
-        "3. Campos de horário (field_type=time) devem vir no formato HH:MM (24h). Ex.: '07h' → '07:00', '10h30' → '10:30'.",
-        "4. Quando o texto trouxer um INTERVALO como '07h às 10h', '6:30 até 10h', 'das 7 às 10', preencha o par *_start_time/*_end_time com os DOIS horários (não use o mesmo valor para os dois).",
-        "5. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
-        "6. Campos de texto curtos (ex.: location, name): apenas o trecho factual. Detalhes acessórios (visão, andar bonito, observações) vão em additional_info.",
-        "7. Omita o campo do JSON quando não souber o valor.",
+        "1. Use SOMENTE informações presentes nos textos. Não invente. Se a informação não está nos textos, OMITA o campo.",
+        "2. Atribua cada horário ao tópico CORRETO. Nunca confunda café da manhã com check-in/check-out/jantar. Exemplos: '20:00 check-out' NÃO é horário de café da manhã; '15:00 check-in' NÃO é horário de almoço.",
+        "3. Plausibilidade por tópico (descarte o valor se estiver fora destas faixas):",
+        "   - café da manhã: 04:00–13:00",
+        "   - almoço: 10:00–16:00 · jantar: 17:00–23:00",
+        "   - check-in: 10:00–23:00 · check-out: 04:00–14:00",
+        "   - piscina: 06:00–22:00 · academia: 05:00–23:00 · spa: 08:00–22:00",
+        "4. Campos de horário (field_type=time) devem vir em HH:MM (24h). '07h' → '07:00', '10h30' → '10:30'.",
+        "5. Em intervalo ('07h às 10h', '6:30 até 10h', 'das 7 às 10'), preencha *_start_time e *_end_time com valores DIFERENTES e na ordem correta (start < end).",
+        "6. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
+        "7. Campos de texto curtos (location, name): só o trecho factual. Detalhes acessórios vão em additional_info.",
+        "8. Prefira preencher core_fields. additional_info é APENAS para o que NÃO couber em campo oficial.",
       ].join("\n");
-      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível):\n${dpList}\n\nTEXTOS DISPONÍVEIS (todos referem-se a este tópico):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields (itens do buffet, observações, restrições, etc.). Pode ficar vazia."\n}`;
+      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível, mas SEMPRE respeitando o tópico):\n${dpList}\n\nTEXTOS DISPONÍVEIS (já filtrados para este tópico, mas podem conter frases de contexto vizinho — IGNORE horários que pertençam a outros tópicos):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields. Pode ficar vazia."\n}`;
 
       try {
         const res = await callGateway({
