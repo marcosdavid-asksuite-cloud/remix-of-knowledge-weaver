@@ -46,6 +46,53 @@ export type Database = {
           },
         ]
       }
+      data_point_definitions: {
+        Row: {
+          active: boolean
+          created_at: string
+          description: string | null
+          field_label: string
+          field_name: string
+          field_type: string
+          id: string
+          required: boolean
+          topic_definition_id: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          description?: string | null
+          field_label: string
+          field_name: string
+          field_type: string
+          id?: string
+          required?: boolean
+          topic_definition_id: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          description?: string | null
+          field_label?: string
+          field_name?: string
+          field_type?: string
+          id?: string
+          required?: boolean
+          topic_definition_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "data_point_definitions_topic_definition_id_fkey"
+            columns: ["topic_definition_id"]
+            isOneToOne: false
+            referencedRelation: "topic_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       extraction_runs: {
         Row: {
           created_at: string
