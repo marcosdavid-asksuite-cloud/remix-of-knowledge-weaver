@@ -267,6 +267,42 @@ function topicRelevantSnippet(text: string, topic: TopicLite): string {
     .trim();
 }
 
+// --- Sanity bounds for time-type fields ---
+function timeToMinutes(t: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(t).trim());
+  if (!m) return null;
+  const h = Number(m[1]); const min = Number(m[2]);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+// [minHour, maxHour] inclusive — semantics by topic/field name.
+function expectedTimeBounds(topicSlug: string, fieldName: string): [number, number] | null {
+  const n = (fieldName || "").toLowerCase();
+  const s = (topicSlug || "").toLowerCase();
+  if (s.includes("breakfast") || n.includes("breakfast") || n.includes("cafe") || n.includes("café")) return [4, 13];
+  if (n.includes("checkout") || n.includes("check_out") || s.includes("checkout")) return [4, 14];
+  if (n.includes("checkin")  || n.includes("check_in")  || s.includes("checkin"))  return [10, 23];
+  if (n.includes("lunch")    || n.includes("almoco")    || n.includes("almoço"))   return [10, 16];
+  if (n.includes("dinner")   || n.includes("jantar"))                              return [17, 23];
+  if (n.includes("pool")     || s.includes("pool")      || n.includes("piscina"))  return [6, 22];
+  if (n.includes("gym")      || s.includes("gym")       || n.includes("academia")) return [5, 23];
+  if (n.includes("spa")      || s.includes("spa"))                                 return [8, 22];
+  return null;
+}
+function isSaneTime(value: unknown, topicSlug: string, fieldName: string): boolean {
+  if (value == null) return true;
+  const v = typeof value === "string" ? value : (typeof value === "object" ? "" : String(value));
+  const mins = timeToMinutes(v);
+  if (mins == null) return true; // not a HH:MM string — let upstream handle
+  const b = expectedTimeBounds(topicSlug, fieldName);
+  if (!b) return true;
+  const h = mins / 60;
+  return h >= b[0] && h <= b[1];
+}
+function isSaneTimeRange(range: { start: string; end: string }, topicSlug: string, fieldStart: string, fieldEnd: string): boolean {
+  return isSaneTime(range.start, topicSlug, fieldStart) && isSaneTime(range.end, topicSlug, fieldEnd);
+}
+
 async function assertDb<T>(
   op: PromiseLike<{ data: T | null; error: { message: string } | null }>,
   label: string,
@@ -861,21 +897,26 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         const endDpd = dps.find((d) => d.field_type === "time" && (d.field_name === `${base}_end_time` || d.field_name === `${base}_end` || d.field_name === `${base}_fim` || d.field_name === `${base}_fim_time`));
         if (!endDpd) continue;
         for (const c of useChunks) {
-          const range = extractTimeRange(c.content);
-          if (range) {
-            if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
-            if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
-            break;
-          }
+          // Only search inside sentences that actually mention this topic — avoid grabbing checkout/checkin times for breakfast.
+          const snippet = topicRelevantSnippet(c.content, topic);
+          const range = extractTimeRange(snippet);
+          if (!range) continue;
+          if (!isSaneTimeRange(range, topic.slug, startDpd.field_name, endDpd.field_name)) continue;
+          if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
+          if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
+          break;
         }
       }
 
-      // Per-field deterministic pass — first-match wins.
+      // Per-field deterministic pass — first-match wins, restricted to topic-relevant sentences.
       for (const c of useChunks) {
+        const snippet = topicRelevantSnippet(c.content, topic);
         for (const d of dps) {
           if (coreValues.has(d.field_name)) continue;
-          const det = tryDeterministic(d, c.content);
-          if (det) coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
+          const det = tryDeterministic(d, snippet);
+          if (!det) continue;
+          if (d.field_type === "time" && !isSaneTime(det.value, topic.slug, d.field_name)) continue;
+          coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
         }
       }
 
@@ -893,18 +934,25 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         : unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
 
 
+      const dpTypeByName = new Map(dps.map((d) => [d.field_name, d.field_type]));
+
       const sys = [
         "Você extrai informações estruturadas de textos de hotéis em pt-BR. Responda APENAS com JSON válido.",
         "REGRAS:",
-        "1. Use SOMENTE informações presentes nos textos. Não invente nada.",
-        "2. Sempre prefira preencher os campos oficiais (core_fields). Só coloque algo em additional_info se NÃO COUBER em nenhum campo.",
-        "3. Campos de horário (field_type=time) devem vir no formato HH:MM (24h). Ex.: '07h' → '07:00', '10h30' → '10:30'.",
-        "4. Quando o texto trouxer um INTERVALO como '07h às 10h', '6:30 até 10h', 'das 7 às 10', preencha o par *_start_time/*_end_time com os DOIS horários (não use o mesmo valor para os dois).",
-        "5. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
-        "6. Campos de texto curtos (ex.: location, name): apenas o trecho factual. Detalhes acessórios (visão, andar bonito, observações) vão em additional_info.",
-        "7. Omita o campo do JSON quando não souber o valor.",
+        "1. Use SOMENTE informações presentes nos textos. Não invente. Se a informação não está nos textos, OMITA o campo.",
+        "2. Atribua cada horário ao tópico CORRETO. Nunca confunda café da manhã com check-in/check-out/jantar. Exemplos: '20:00 check-out' NÃO é horário de café da manhã; '15:00 check-in' NÃO é horário de almoço.",
+        "3. Plausibilidade por tópico (descarte o valor se estiver fora destas faixas):",
+        "   - café da manhã: 04:00–13:00",
+        "   - almoço: 10:00–16:00 · jantar: 17:00–23:00",
+        "   - check-in: 10:00–23:00 · check-out: 04:00–14:00",
+        "   - piscina: 06:00–22:00 · academia: 05:00–23:00 · spa: 08:00–22:00",
+        "4. Campos de horário (field_type=time) devem vir em HH:MM (24h). '07h' → '07:00', '10h30' → '10:30'.",
+        "5. Em intervalo ('07h às 10h', '6:30 até 10h', 'das 7 às 10'), preencha *_start_time e *_end_time com valores DIFERENTES e na ordem correta (start < end).",
+        "6. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
+        "7. Campos de texto curtos (location, name): só o trecho factual. Detalhes acessórios vão em additional_info.",
+        "8. Prefira preencher core_fields. additional_info é APENAS para o que NÃO couber em campo oficial.",
       ].join("\n");
-      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível):\n${dpList}\n\nTEXTOS DISPONÍVEIS (todos referem-se a este tópico):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields (itens do buffet, observações, restrições, etc.). Pode ficar vazia."\n}`;
+      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível, mas SEMPRE respeitando o tópico):\n${dpList}\n\nTEXTOS DISPONÍVEIS (já filtrados para este tópico, mas podem conter frases de contexto vizinho — IGNORE horários que pertençam a outros tópicos):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields. Pode ficar vazia."\n}`;
 
       try {
         const res = await callGateway({
@@ -947,6 +995,8 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
             const canonical = resolve(name);
             if (!canonical) continue;
             if (coreValues.has(canonical)) continue;
+            // Sanity check: drop nonsensical time values (e.g. café da manhã 20:00).
+            if (dpTypeByName.get(canonical) === "time" && !isSaneTime(val, topic.slug, canonical)) continue;
             coreValues.set(canonical, { value: val, chunkId: usedChunkIds[0] });
           }
           if (typeof parsed.additional_info === "string") {
