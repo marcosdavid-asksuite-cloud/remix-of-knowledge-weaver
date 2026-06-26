@@ -10,17 +10,19 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-type Mode = "raw_chunks" | "structured" | "structured_only";
-const ALL_MODES: Mode[] = ["raw_chunks", "structured", "structured_only"];
+type Mode = "raw_chunks" | "structured" | "structured_only" | "external_agent";
+const ALL_MODES: Mode[] = ["raw_chunks", "structured", "structured_only", "external_agent"];
 const MODE_LABEL: Record<Mode, string> = {
   raw_chunks: "Raw chunks",
   structured: "Structured (+addl)",
   structured_only: "Structured only",
+  external_agent: "External Agent",
 };
 const MODE_COLOR: Record<Mode, string> = {
   raw_chunks: "border-amber-500/40 bg-amber-500/5",
   structured: "border-emerald-500/40 bg-emerald-500/5",
   structured_only: "border-sky-500/40 bg-sky-500/5",
+  external_agent: "border-violet-500/40 bg-violet-500/5",
 };
 
 type TestRun = {
