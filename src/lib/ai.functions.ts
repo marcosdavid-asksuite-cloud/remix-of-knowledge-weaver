@@ -502,21 +502,13 @@ export const runExtraction = createServerFn({ method: "POST" })
       };
 
 
-      // ---- Persist mode: write candidates + dedupe into knowledge_fields/additional_info ----
-      let persisted = { candidates: 0, knowledge_fields: 0, knowledge_fields_skipped: 0, additional_info: 0 };
+      // ---- Persist mode (Etapa 4): salva apenas candidates + additional_info pending.
+      //  Consolidação em KnowledgeFields é responsabilidade de consolidateKnowledge.
+      let persisted = { candidates: 0, additional_info: 0 };
       if (data.mode === "persist") {
         for (const t of previewTopics) {
           const topic = topicBySlug.get(t.topic_slug);
           if (!topic) continue;
-
-          // Existing knowledge_fields for dedupe
-          const { data: existing } = await sb
-            .from("knowledge_fields").select("id, field_name, field_value, source_chunk_ids").eq("topic_id", topic.topicId);
-          const existingMap = new Map<string, { id: string; source_chunk_ids: string[] }>();
-          for (const e of existing ?? []) {
-            const key = `${e.field_name}|${canonicalValue(e.field_value)}`;
-            existingMap.set(key, { id: e.id, source_chunk_ids: (e.source_chunk_ids ?? []) as string[] });
-          }
 
           const allFields = [
             ...t.core_fields.map((f) => ({ ...f, field_type: "text", field_origin: "core" as const })),
@@ -524,7 +516,6 @@ export const runExtraction = createServerFn({ method: "POST" })
           ];
 
           for (const f of allFields) {
-            // Always write the candidate
             await sb.from("knowledge_candidates").insert({
               project_id: data.projectId,
               extraction_run_id: run.id,
@@ -539,33 +530,9 @@ export const runExtraction = createServerFn({ method: "POST" })
               extraction_method: f.extraction_method,
             } as never);
             persisted.candidates++;
-
-
-            const key = `${f.field_name}|${canonicalValue(f.field_value)}`;
-            const existingRow = existingMap.get(key);
-            if (existingRow) {
-              // Merge source_chunk_ids only
-              const merged = Array.from(new Set([...(existingRow.source_chunk_ids ?? []), ...f.source_chunk_ids]));
-              await sb.from("knowledge_fields").update({ source_chunk_ids: merged as never })
-                .eq("id", existingRow.id);
-              persisted.knowledge_fields_skipped++;
-            } else {
-              await sb.from("knowledge_fields").insert({
-                topic_id: topic.topicId,
-                field_name: f.field_name,
-                field_type: f.field_type,
-                field_value: (f.field_value ?? null) as never,
-                field_origin: f.field_origin,
-                confidence: f.confidence ?? null,
-                source_chunk_ids: f.source_chunk_ids as never,
-                verified: false,
-              });
-              existingMap.set(key, { id: "new", source_chunk_ids: f.source_chunk_ids });
-              persisted.knowledge_fields++;
-            }
           }
 
-          // Additional info — dedupe by content
+          // Additional info — dedupe by content; entra como pending para aprovação.
           const { data: existingAdd } = await sb
             .from("additional_info").select("id, content").eq("topic_id", topic.topicId);
           const existingAddSet = new Set((existingAdd ?? []).map((a) => a.content.trim().toLowerCase()));
@@ -575,12 +542,14 @@ export const runExtraction = createServerFn({ method: "POST" })
               topic_id: topic.topicId,
               content: a.content,
               source_chunk_ids: a.source_chunk_ids as never,
-            });
+              status: "pending",
+            } as never);
             existingAddSet.add(a.content.trim().toLowerCase());
             persisted.additional_info++;
           }
         }
       }
+
 
       const preview = { topics: previewTopics, chunk_topics: chunkTopicMap, statistics: stats, persisted };
 
@@ -654,9 +623,13 @@ export const runTestAnswer = createServerFn({ method: "POST" })
       const lines: string[] = [];
       for (const t of useTopics) {
         const { data: fields } = await sb
-          .from("knowledge_fields").select("*").eq("topic_id", t.id);
+          .from("knowledge_fields").select("*")
+          .eq("topic_id", t.id)
+          .eq("consolidation_status", "consolidated");
         const { data: addl } = await sb
-          .from("additional_info").select("content").eq("topic_id", t.id);
+          .from("additional_info").select("content")
+          .eq("topic_id", t.id)
+          .eq("status", "approved");
         if ((fields?.length ?? 0) === 0 && (addl?.length ?? 0) === 0) continue;
         lines.push(`# Tópico: ${t.name} (${t.slug})`);
         for (const f of fields ?? []) {
@@ -670,7 +643,7 @@ export const runTestAnswer = createServerFn({ method: "POST" })
         }
         lines.push("");
       }
-      contextText = lines.join("\n") || "(base estruturada vazia)";
+      contextText = lines.join("\n") || "(base estruturada vazia — rode Consolidation primeiro)";
       contextSent.structured_context = contextText;
     } else {
       const { data: sources } = await sb
