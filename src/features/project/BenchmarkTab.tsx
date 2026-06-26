@@ -299,6 +299,19 @@ export function BenchmarkTab({ projectId }: { projectId: string }) {
               <label className="mb-1 block text-xs text-muted-foreground">Max chunks (raw_chunks)</label>
               <Input value={maxChunks} onChange={(e) => setMaxChunks(e.target.value)} />
             </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground">External Agent</label>
+              <select
+                className="w-full rounded border bg-background px-2 py-1.5 text-sm"
+                value={externalAgentId}
+                onChange={(e) => setExternalAgentId(e.target.value)}
+              >
+                <option value="">— (necessário para modo external_agent) —</option>
+                {(agents ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>{a.name} ({a.model ?? "?"})</option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-end gap-2">
               <label className="flex items-center gap-2 text-xs">
                 <input type="checkbox" checked={includeAddl} onChange={(e) => setIncludeAddl(e.target.checked)} />
