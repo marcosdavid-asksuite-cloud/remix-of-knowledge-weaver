@@ -147,6 +147,9 @@ export function BenchmarkTab({ projectId }: { projectId: string }) {
   async function startRun() {
     if (selectedModes.length === 0) { toast.error("Selecione ao menos um modo"); return; }
     if (activeQs.length === 0) { toast.error("Sem perguntas ativas"); return; }
+    if (selectedModes.includes("external_agent") && !externalAgentId) {
+      toast.error("Selecione um External Agent"); return;
+    }
     const limit = questionLimit ? Math.max(1, parseInt(questionLimit, 10)) : activeQs.length;
     const ids = activeQs.slice(0, limit).map((q) => q.id);
     setBusy(true);
@@ -161,6 +164,7 @@ export function BenchmarkTab({ projectId }: { projectId: string }) {
           temperature: temperature ? Number(temperature) : undefined,
           maxRawChunks: maxChunks ? parseInt(maxChunks, 10) : undefined,
           includeAdditional: includeAddl,
+          externalAgentId: externalAgentId || undefined,
         },
       });
       toast.success(`Benchmark concluído. ${res.statistics.successes}/${res.statistics.total_runs} runs.`);
