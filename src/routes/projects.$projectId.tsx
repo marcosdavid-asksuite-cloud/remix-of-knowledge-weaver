@@ -52,6 +52,8 @@ function ProjectDetail() {
         </div>
       </div>
 
+      <div className="mb-6"><ProjectSummaryCards projectId={projectId} /></div>
+
       <Tabs defaultValue="sources">
         <TabsList>
           <TabsTrigger value="sources">Sources</TabsTrigger>
