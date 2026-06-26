@@ -173,11 +173,20 @@ export function HealthTab({ projectId }: { projectId: string }) {
                       ))}
                     </div>
                   </td>
-                  <td className="py-2 text-right">
+                  <td className="py-2 text-right whitespace-nowrap">
+                    <Link
+                      to="/projects/$projectId"
+                      params={{ projectId }}
+                      search={{ tab: "analytics", topic: t.topic_slug }}
+                      className="text-xs underline mr-2"
+                    >
+                      View Analytics
+                    </Link>
                     <Button size="sm" variant="ghost" onClick={() => setSelected(t)}>Detalhes</Button>
                   </td>
                 </tr>
               ))}
+
             </tbody>
           </table>
         </CardContent>
