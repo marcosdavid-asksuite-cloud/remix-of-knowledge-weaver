@@ -27,6 +27,7 @@ export function ExtractionSettingsTab() {
   const [temperature, setTemperature] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [extractionPrompt, setExtractionPrompt] = useState("");
+  const [useLlmForDynamic, setUseLlmForDynamic] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -36,6 +37,8 @@ export function ExtractionSettingsTab() {
     setTemperature(String(data.temperature));
     setSystemPrompt(data.system_prompt);
     setExtractionPrompt(data.extraction_prompt);
+    const d = data as typeof data & { use_llm_for_dynamic?: boolean };
+    setUseLlmForDynamic(d.use_llm_for_dynamic ?? true);
   }, [data]);
 
   async function save() {
@@ -47,8 +50,9 @@ export function ExtractionSettingsTab() {
       temperature: Number(temperature),
       system_prompt: systemPrompt,
       extraction_prompt: extractionPrompt,
+      use_llm_for_dynamic: useLlmForDynamic,
       updated_at: new Date().toISOString(),
-    }).eq("id", data.id);
+    } as never).eq("id", data.id);
     setSaving(false);
     if (error) toast.error(error.message);
     else {
@@ -56,6 +60,7 @@ export function ExtractionSettingsTab() {
       qc.invalidateQueries({ queryKey: ["extraction_settings"] });
     }
   }
+
 
   if (!data) return <p className="text-sm text-muted-foreground">Carregando…</p>;
 
