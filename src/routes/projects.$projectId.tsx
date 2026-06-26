@@ -61,6 +61,7 @@ function ProjectDetail() {
           <TabsTrigger value="questions">Questions</TabsTrigger>
           <TabsTrigger value="playground">Playground</TabsTrigger>
           <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
+          <TabsTrigger value="health">Health</TabsTrigger>
         </TabsList>
         <TabsContent value="sources" className="mt-6"><SourcesTab projectId={projectId} /></TabsContent>
         <TabsContent value="topics" className="mt-6"><TopicsTab projectId={projectId} /></TabsContent>
@@ -70,6 +71,7 @@ function ProjectDetail() {
         <TabsContent value="questions" className="mt-6"><QuestionsTab projectId={projectId} /></TabsContent>
         <TabsContent value="playground" className="mt-6"><PlaygroundTab projectId={projectId} /></TabsContent>
         <TabsContent value="benchmark" className="mt-6"><BenchmarkTab projectId={projectId} /></TabsContent>
+        <TabsContent value="health" className="mt-6"><HealthTab projectId={projectId} /></TabsContent>
       </Tabs>
     </AppShell>
   );
