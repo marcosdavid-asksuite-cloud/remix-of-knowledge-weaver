@@ -59,6 +59,8 @@ type Addl = {
 
 export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [reextractingAll, setReextractingAll] = useState(false);
+  const qc = useQueryClient();
 
   const { data: topics } = useQuery({
     queryKey: ["sk_topics", projectId],
