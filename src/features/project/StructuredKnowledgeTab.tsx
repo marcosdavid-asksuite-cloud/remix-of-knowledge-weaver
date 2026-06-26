@@ -280,6 +280,13 @@ function TopicEditor({
         } as never);
       }
 
+      // 3. Delete all dynamic knowledge_fields for this topic — textarea is the single source of truth
+      //    for non-core content; dynamic fields would otherwise duplicate text the user already curated.
+      const dynamicIds = fields.filter((f) => f.field_origin === "dynamic").map((f) => f.id);
+      if (dynamicIds.length > 0) {
+        await supabase.from("knowledge_fields").delete().in("id", dynamicIds);
+      }
+
       toast.success("Salvo");
       qc.invalidateQueries({ queryKey: ["sk_fields", projectId] });
       qc.invalidateQueries({ queryKey: ["sk_addls", projectId] });
