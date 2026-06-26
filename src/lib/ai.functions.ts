@@ -666,6 +666,257 @@ export const persistRun = createServerFn({ method: "POST" })
   });
 
 // =====================================================
+// extractTopicAggregated — re-extracts one (or all) topics
+// by aggregating ALL classified chunks per topic into a single
+// LLM call. Writes results DIRECTLY into knowledge_fields
+// (consolidated) and additional_info (approved), preserving
+// any record marked as user-edited (source_chunk_ids = []).
+// =====================================================
+export const extractTopicAggregated = createServerFn({ method: "POST" })
+  .inputValidator((input: { projectId: string; topicSlug?: string }) => input)
+  .handler(async ({ data }) => {
+    const sb = getSb();
+
+    const { data: project } = await sb
+      .from("projects").select("id, name").eq("id", data.projectId).maybeSingle();
+    if (!project) throw new Error("Projeto não encontrado");
+
+    const { data: sources } = await sb
+      .from("raw_sources").select("id").eq("project_id", data.projectId);
+    const sourceIds = (sources ?? []).map((s) => s.id);
+    if (sourceIds.length === 0) throw new Error("Sem fontes. Faça upload primeiro.");
+
+    const { data: chunksRaw } = await sb
+      .from("raw_chunks").select("id, content").in("raw_source_id", sourceIds).order("position");
+    const chunks = chunksRaw ?? [];
+    if (chunks.length === 0) throw new Error("Nenhum chunk encontrado.");
+
+    const { data: modelCfg } = await sb
+      .from("model_configurations").select("*").eq("active", true)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
+
+    const { data: topicsRaw } = await sb
+      .from("topics")
+      .select("id, topic_definition_id, topic_definitions(slug, name, description, aliases)")
+      .eq("project_id", data.projectId);
+
+    let topics: TopicLite[] = (topicsRaw ?? []).map((t) => {
+      const td = t.topic_definitions as {
+        slug: string; name: string; description: string | null; aliases: string[];
+      } | null;
+      return {
+        topicId: t.id,
+        defId: t.topic_definition_id,
+        slug: td?.slug ?? "",
+        name: td?.name ?? "",
+        description: td?.description ?? "",
+        aliases: td?.aliases ?? [],
+      };
+    });
+    if (data.topicSlug) topics = topics.filter((t) => t.slug === data.topicSlug);
+    if (topics.length === 0) throw new Error("Nenhum tópico encontrado.");
+
+    const defIds = topics.map((t) => t.defId);
+    const { data: dpdRaw } = await sb
+      .from("data_point_definitions").select("*").in("topic_definition_id", defIds).eq("active", true);
+    type DpdFull = DpdLite & { field_label: string; description: string | null };
+    const dpdByDefId = new Map<string, DpdFull[]>();
+    for (const d of dpdRaw ?? []) {
+      const list = dpdByDefId.get(d.topic_definition_id) ?? [];
+      list.push({
+        field_name: d.field_name,
+        field_label: d.field_label,
+        field_type: d.field_type,
+        description: d.description,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        extraction_strategy: (d as any).extraction_strategy ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        regex_pattern: (d as any).regex_pattern ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        keywords: (d as any).keywords ?? {},
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        negative_keywords: (d as any).negative_keywords ?? [],
+      });
+      dpdByDefId.set(d.topic_definition_id, list);
+    }
+
+    const CHUNK_CAP = 25;
+    const CHUNK_CHAR_CAP = 1600;
+    const result: Array<{
+      topic_slug: string;
+      core_filled: number;
+      core_total: number;
+      additional_info_chars: number;
+      chunks_used: number;
+      input_tokens: number;
+      output_tokens: number;
+    }> = [];
+
+    for (const topic of topics) {
+      const dps = dpdByDefId.get(topic.defId) ?? [];
+      const classified = chunks.filter((c) => aliasMatch(c.content, [topic]).length > 0);
+      if (classified.length === 0) {
+        result.push({
+          topic_slug: topic.slug, core_filled: 0, core_total: dps.length,
+          additional_info_chars: 0, chunks_used: 0, input_tokens: 0, output_tokens: 0,
+        });
+        continue;
+      }
+      const useChunks = classified.slice(0, CHUNK_CAP);
+      const usedChunkIds = useChunks.map((c) => c.id);
+
+      // Deterministic pass — first-match wins.
+      const coreValues = new Map<string, { value: unknown; chunkId: string }>();
+      for (const c of useChunks) {
+        for (const d of dps) {
+          if (coreValues.has(d.field_name)) continue;
+          const det = tryDeterministic(d, c.content);
+          if (det) coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
+        }
+      }
+
+      const unresolved = dps.filter((d) => !coreValues.has(d.field_name));
+      let additionalInfoText = "";
+      let inT = 0, outT = 0;
+
+      const combinedText = useChunks
+        .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${c.content.slice(0, CHUNK_CHAR_CAP)}`)
+        .join("\n---\n")
+        .slice(0, 14000);
+
+      const dpList = unresolved.length === 0
+        ? "(todos os campos oficiais já foram preenchidos pela camada determinística)"
+        : unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
+
+      const sys = "Você extrai informações estruturadas de textos de hotéis. Responda APENAS com JSON válido. Não invente nada que não esteja no texto. Quando não souber o valor de um campo, omita-o. Para informações úteis que não cabem nos campos oficiais, junte-as em 'additional_info' como texto narrativo bem escrito em português.";
+      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR:\n${dpList}\n\nTEXTOS DISPONÍVEIS (todos referem-se a este tópico):\n${combinedText}\n\nResponda com JSON no formato:\n{\n  "core_fields": { "field_name_1": valor, ... },\n  "additional_info": "texto narrativo opcional com info relevante que não cabe em core_fields (ex.: itens do café, observações). Pode ser vazio."\n}`;
+
+      try {
+        const res = await callGateway({
+          model: modelCfg.model_name,
+          temperature: Number(modelCfg.temperature) || 0.2,
+          maxTokens: modelCfg.max_tokens,
+          system: sys,
+          user,
+          jsonMode: true,
+        });
+        inT = res.inputTokens; outT = res.outputTokens;
+        await sb.from("llm_calls").insert({
+          prompt_type: `extract_aggregated:${topic.slug}`,
+          model_name: modelCfg.model_name,
+          input_tokens: inT, output_tokens: outT, latency: res.latency,
+          estimated_cost: estimateCost(modelCfg.model_name, inT, outT),
+        } as never);
+
+        try {
+          const parsed = parseJsonLenient(res.content) as {
+            core_fields?: Record<string, unknown>;
+            additional_info?: string;
+          };
+          const allowedCore = new Set(dps.map((d) => d.field_name));
+          const coreAlias = new Map<string, string>();
+          for (const d of dps) {
+            for (const v of fieldKeyVariants(d.field_name)) coreAlias.set(v, d.field_name);
+            for (const v of fieldKeyVariants(d.field_label)) coreAlias.set(v, d.field_name);
+          }
+          const resolve = (name: string): string | null => {
+            if (allowedCore.has(name)) return name;
+            for (const v of fieldKeyVariants(name)) {
+              const hit = coreAlias.get(v);
+              if (hit) return hit;
+            }
+            return null;
+          };
+          for (const [name, val] of Object.entries(parsed.core_fields ?? {})) {
+            if (isEmptyValue(val)) continue;
+            const canonical = resolve(name);
+            if (!canonical) continue;
+            if (coreValues.has(canonical)) continue;
+            coreValues.set(canonical, { value: val, chunkId: usedChunkIds[0] });
+          }
+          if (typeof parsed.additional_info === "string") {
+            additionalInfoText = parsed.additional_info.trim();
+          }
+        } catch (e) {
+          console.error("Parse aggregated extraction failed", topic.slug, e);
+        }
+      } catch (e) {
+        console.error("Aggregated extraction LLM call failed", topic.slug, e);
+      }
+
+      // ---- Persist core fields ----
+      const { data: existingFields } = await sb
+        .from("knowledge_fields").select("id, field_name, field_origin, approved_by_user")
+        .eq("topic_id", topic.topicId);
+      const existing = existingFields ?? [];
+
+      for (const d of dps) {
+        const newVal = coreValues.get(d.field_name);
+        if (!newVal) continue;
+        const ex = existing.find((f) => f.field_name === d.field_name && f.field_origin === "core");
+        if (ex?.approved_by_user) continue;
+        const payload = {
+          topic_id: topic.topicId,
+          field_name: d.field_name,
+          field_type: d.field_type,
+          field_value: newVal.value,
+          field_origin: "core",
+          approved_by_user: false,
+          source_of_truth: "ai_extracted",
+          consolidation_status: "consolidated",
+          source_chunk_ids: [newVal.chunkId],
+          confidence: 0.85,
+        };
+        if (ex) {
+          await sb.from("knowledge_fields").update(payload as never).eq("id", ex.id);
+        } else {
+          await sb.from("knowledge_fields").insert(payload as never);
+        }
+      }
+
+      // Remove dynamic fields — they should live inside additional_info.
+      const dynamicIds = existing.filter((f) => f.field_origin === "dynamic").map((f) => f.id);
+      if (dynamicIds.length > 0) {
+        await sb.from("knowledge_fields").delete().in("id", dynamicIds);
+      }
+
+      // ---- Persist additional_info ----
+      const { data: addls } = await sb
+        .from("additional_info").select("id, source_chunk_ids, status").eq("topic_id", topic.topicId);
+      const aiAddls = (addls ?? []).filter((a) => (a.source_chunk_ids ?? []).length > 0);
+      if (aiAddls.length > 0) {
+        await sb.from("additional_info").update({ status: "rejected" } as never)
+          .in("id", aiAddls.map((a) => a.id));
+      }
+      if (additionalInfoText.length > 0) {
+        const userEdit = (addls ?? []).find(
+          (a) => (a.source_chunk_ids ?? []).length === 0 && a.status === "approved",
+        );
+        await sb.from("additional_info").insert({
+          topic_id: topic.topicId,
+          content: additionalInfoText,
+          status: userEdit ? "pending" : "approved",
+          source_chunk_ids: usedChunkIds,
+          approved_at: userEdit ? null : new Date().toISOString(),
+        } as never);
+      }
+
+      result.push({
+        topic_slug: topic.slug,
+        core_filled: coreValues.size,
+        core_total: dps.length,
+        additional_info_chars: additionalInfoText.length,
+        chunks_used: useChunks.length,
+        input_tokens: inT,
+        output_tokens: outT,
+      });
+    }
+
+    return { topics: result };
+  });
+
+// =====================================================
 // runTestAnswer (unchanged behavior)
 // =====================================================
 export const runTestAnswer = createServerFn({ method: "POST" })
