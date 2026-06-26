@@ -311,8 +311,24 @@ export const runBenchmark = createServerFn({ method: "POST" })
               context = await buildRawChunksContext(sb, data.projectId, q.question, useTopics, maxRawChunks);
             } else if (mode === "structured") {
               context = await buildStructuredContext(sb, useTopics, true);
-            } else {
+            } else if (mode === "structured_only") {
               context = await buildStructuredContext(sb, useTopics, false);
+            } else {
+              // external_agent — build context based on agent options
+              const co = externalAgent?.context_options ?? {};
+              const parts: string[] = [];
+              const meta: Record<string, unknown> = {};
+              if (co.structured !== false) {
+                const s = await buildStructuredContext(sb, useTopics, co.additional !== false);
+                parts.push(s.text);
+                Object.assign(meta, { structured: s.meta });
+              }
+              if (co.raw_chunks === true) {
+                const r = await buildRawChunksContext(sb, data.projectId, q.question, useTopics, maxRawChunks);
+                parts.push(r.text);
+                Object.assign(meta, { raw: r.meta });
+              }
+              context = { text: parts.join("\n\n---\n\n") || "(sem contexto)", meta };
             }
           } catch (e) {
             await sb.from("test_runs").insert({
