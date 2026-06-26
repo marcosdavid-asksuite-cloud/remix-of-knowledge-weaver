@@ -558,8 +558,30 @@ export const runExtraction = createServerFn({ method: "POST" })
         }
       }
 
+      // --- Update raw_chunks.extraction_status (only in persist mode) ---
+      if (data.mode === "persist") {
+        const extractedChunkIds = new Set<string>();
+        for (const b of agg.values()) {
+          for (const f of b.core_fields) f.source_chunk_ids.forEach((id) => extractedChunkIds.add(id));
+          for (const f of b.dynamic_fields) f.source_chunk_ids.forEach((id) => extractedChunkIds.add(id));
+          for (const a of b.additional_information) a.source_chunk_ids.forEach((id) => extractedChunkIds.add(id));
+        }
+        const processedIds = chunks.map((c) => c.id);
+        const noKnowledgeIds = processedIds.filter((id) => !extractedChunkIds.has(id));
+        if (extractedChunkIds.size > 0) {
+          await sb.from("raw_chunks").update({ extraction_status: "extracted" } as never)
+            .in("id", Array.from(extractedChunkIds));
+        }
+        if (noKnowledgeIds.length > 0) {
+          // Don't overwrite manually-marked irrelevant chunks
+          await sb.from("raw_chunks").update({ extraction_status: "no_knowledge_found" } as never)
+            .in("id", noKnowledgeIds)
+            .neq("extraction_status", "marked_irrelevant");
+        }
+      }
 
       const preview = { topics: previewTopics, chunk_topics: chunkTopicMap, statistics: stats, persisted };
+
 
       await sb.from("extraction_runs").update({
         status: "done",
