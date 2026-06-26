@@ -368,7 +368,59 @@ function EditDialog({
                 </option>
               ))}
             </select>
+          <div>
+            <Label>Estratégia de extração</Label>
+            <select
+              className="w-full rounded border bg-background p-2 text-sm"
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value as Strategy)}
+            >
+              {STRATEGIES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              regex / keyword: nunca chama LLM se resolver. hybrid: tenta determinístico e cai p/ LLM. llm: sempre LLM.
+            </p>
           </div>
+          {(strategy === "regex" || strategy === "hybrid") && (
+            <div>
+              <Label>Regex pattern (opcional)</Label>
+              <Input
+                placeholder="ex.: \\b(\\d{1,2})[:h](\\d{2})?\\b"
+                value={regexPattern}
+                onChange={(e) => setRegexPattern(e.target.value)}
+                className="font-mono text-xs"
+              />
+            </div>
+          )}
+          {(strategy === "keyword" || strategy === "hybrid") && (
+            <>
+              <div>
+                <Label>Keywords (JSON)</Label>
+                <Textarea
+                  rows={4}
+                  className="font-mono text-xs"
+                  value={keywordsJson}
+                  onChange={(e) => setKeywordsJson(e.target.value)}
+                  placeholder='{"allowed":["aceita pets","pet friendly"],"not_allowed":["não aceita pets"]}'
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Boolean: {"{ positive: [...], negative: [...] }"}. Enum: {"{ value: [...] }"}.
+                </p>
+              </div>
+              <div>
+                <Label>Negative keywords (JSON array)</Label>
+                <Textarea
+                  rows={2}
+                  className="font-mono text-xs"
+                  value={negativeJson}
+                  onChange={(e) => setNegativeJson(e.target.value)}
+                  placeholder='["não","sem","proibido"]'
+                />
+              </div>
+            </>
+          )}
           <div>
             <Label>Descrição</Label>
             <Textarea
