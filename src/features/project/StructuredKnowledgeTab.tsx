@@ -12,7 +12,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { extractTopicAggregated } from "@/lib/ai.functions";
-import { consolidateKnowledge } from "@/lib/consolidation.functions";
+
 
 const TOPIC_EMOJI: Record<string, string> = {
   breakfast: "☕", checkin: "🛎️", checkout: "🧳", parking: "🚗",
