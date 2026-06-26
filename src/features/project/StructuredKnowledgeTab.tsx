@@ -132,8 +132,33 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
     return <p className="text-sm text-muted-foreground">Nenhum tópico ativo. Vá em Settings e ative tópicos.</p>;
   }
 
+  async function reextractAll() {
+    setReextractingAll(true);
+    try {
+      const res = await extractTopicAggregated({ data: { projectId } });
+      const filled = res.topics.reduce((acc, t) => acc + t.core_filled, 0);
+      const total = res.topics.reduce((acc, t) => acc + t.core_total, 0);
+      toast.success(`Re-extração concluída · ${filled}/${total} campos preenchidos`);
+      qc.invalidateQueries({ queryKey: ["sk_fields", projectId] });
+      qc.invalidateQueries({ queryKey: ["sk_addls", projectId] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReextractingAll(false);
+    }
+  }
+
   return (
-    <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          Cada tópico agrega todos os chunks relevantes antes de chamar a LLM — captura mais detalhes e fica mais barato.
+        </p>
+        <Button size="sm" variant="outline" onClick={reextractAll} disabled={reextractingAll}>
+          {reextractingAll ? "Re-extraindo todos…" : "Re-extrair todos os tópicos"}
+        </Button>
+      </div>
+      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Tópicos</CardTitle>
