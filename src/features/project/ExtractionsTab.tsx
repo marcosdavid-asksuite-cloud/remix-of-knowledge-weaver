@@ -97,7 +97,7 @@ export function ExtractionsTab({ projectId }: { projectId: string }) {
       toast.success(
         mode === "dry_run"
           ? `Dry run: ${s.core_fields_found} core / ${s.dynamic_fields_found} dynamic. ~$${s.estimated_cost.toFixed(4)}`
-          : `Persistido: ${res.persisted?.knowledge_fields ?? 0} novos, ${res.persisted?.knowledge_fields_skipped ?? 0} duplicados.`,
+          : `Persistido: ${res.persisted?.candidates ?? 0} candidates, ${res.persisted?.additional_info ?? 0} additional info. Rode Consolidation para promover.`,
       );
       qc.invalidateQueries({ queryKey: ["extraction_runs", projectId] });
       qc.invalidateQueries({ queryKey: ["knowledge_fields", projectId] });

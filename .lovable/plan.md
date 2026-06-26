@@ -1,221 +1,95 @@
-# Laboratório de Validação — Base de Conhecimento Híbrida (v2, simplificada)
 
-MVP enxuto: validar se uma base estruturada melhora as respostas da IA. Sem embeddings, sem RAG, sem multi-tenancy, sem avaliação automática.
+## Objetivo
+Transformar `KnowledgeCandidates` (fatos extraídos brutos) em uma base oficial confiável de `KnowledgeFields` consolidados, com gestão explícita de conflitos e aprovação manual. A base usada pelo Playground passa a vir só de fatos consolidados/aprovados.
 
-Fluxo central:
+## 1. Migrações de banco
 
-```text
-CSV → Extração (LLM) → Base Híbrida → Edição → Teste de Perguntas
-```
+### 1.1 Nova tabela `knowledge_conflicts`
+Colunas: `id`, `project_id` (FK projects), `topic_definition_id` (FK), `field_name`, `field_type`, `conflict_type` (`different_values | contradictory_boolean | different_time | different_price | duplicate_uncertain`), `status` (`pending | resolved | ignored`, default `pending`), `candidate_ids uuid[]`, `selected_candidate_id` (FK knowledge_candidates, null), `manual_value jsonb`, `resolution_note text`, `created_at`, `resolved_at`.
+GRANT padrão (anon RW por ser laboratório, mesmo padrão das demais tabelas) + RLS allow-all. Trigger `update_updated_at_column` não se aplica (sem `updated_at`).
 
----
+### 1.2 Alterações em `knowledge_fields`
+Adicionar: `source_of_truth text` (default `auto_single_candidate`, CHECK em 5 valores), `consolidation_status text` (default `consolidated`, CHECK em `consolidated|needs_review`), `approved_by_user boolean default false`, `approved_at timestamptz`, `candidate_ids uuid[] default '{}'`.
 
-## 1. Entidades
+### 1.3 Alterações em `additional_info`
+Adicionar: `status text` (default `pending`, CHECK em `pending|approved|rejected`), `approved_at timestamptz`. Persist da extração passa a inserir como `pending`.
 
-### Project
-Substitui Hotel. Escopo de cada experimento.
-- `id`, `name`, `description`, `created_at`
+### 1.4 Alterações em `knowledge_candidates`
+Garantir que o `status` aceite `pending|approved|rejected|superseded`. Acrescentar `field_type` se já não existir (necessário para conflict_type).
 
-### RawSource
-Origem do conteúdo bruto. MVP = CSV.
-- `id`, `project_id`, `type` (csv | text), `filename`, `uploaded_at`
+## 2. Lib de normalização (`src/lib/value-normalizer.ts`)
+Função `normalizeValue(fieldType, value)` retornando string canônica usada como chave de agrupamento. Reusa `extractTime`/`extractCurrency`/keywords booleanos. Casos:
+- `time` → `HH:mm`
+- `time_range` → `HH:mm-HH:mm`
+- `currency` → `BRL:50.00`
+- `number` → toString sem espaços
+- `boolean` → `true`/`false` (mapeia "sim", "possui", "não", etc.)
+- `text` / outros → trim, lowercase, collapse spaces
+Também export `chooseConflictType(fieldType)`.
 
-### RawChunk
-Unidade atômica (linha do CSV ou bloco de texto).
-- `id`, `raw_source_id`, `content`, `metadata` (jsonb), `position`
+## 3. Server function `consolidateKnowledge` (`src/lib/consolidation.functions.ts`)
+`createServerFn({ method:'POST' })` recebendo `{ projectId }`. Algoritmo:
+1. Carrega candidates do projeto com status `pending` ou `approved` (não `rejected`/`superseded`).
+2. Agrupa por `(topic_definition_id, field_name)`.
+3. Para cada grupo, normaliza cada candidato e agrupa por valor canônico.
+4. **Caso A/B**: um único valor canônico → upsert em `knowledge_fields` (match em `project_id+topic_id+field_name`):
+   - `field_value` = valor original do candidato de maior confidence.
+   - `source_chunk_ids` = união.
+   - `candidate_ids` = união.
+   - `confidence` = máximo.
+   - `source_of_truth` = `auto_single_candidate` (1 candidato) ou `auto_merged_candidates` (>1).
+   - `consolidation_status` = `consolidated`.
+   - Marca candidates `approved`.
+   - Se houver conflito anterior resolvido para esse field, mantém; se pendente, deixa.
+5. **Caso C**: mais de um valor canônico → não toca o `knowledge_field`, cria/atualiza um `knowledge_conflicts` `pending` (`conflict_type` via `chooseConflictType`). Candidates permanecem `pending`.
+6. Limpa conflitos `pending` que deixaram de existir (ex.: rejeições posteriores).
+7. Retorna estatísticas: `consolidated_fields`, `merged_fields`, `new_conflicts`, `resolved_conflicts_cleared`, `pending_candidates`.
 
-### TopicDefinitions
-Catálogo de tópicos (seedado + extensível).
-- `id`, `slug`, `name`, `description`, `aliases` (text[])
+Função auxiliar `approveCandidate({candidateId})` e `rejectCandidate({candidateId})` para a UI da aba Consolidation.
 
-### Topic
-Instância de tópico ativa em um projeto (permite ligar/desligar por projeto).
-- `id`, `project_id`, `topic_definition_id`, `created_at`
+## 4. Server function `resolveConflict` (`src/lib/consolidation.functions.ts`)
+Entrada: `{ conflictId, action: 'select'|'edit'|'ignore', selectedCandidateId?, manualValue?, note? }`.
+- `select`: upsert KF com valor do candidato escolhido, `source_of_truth=manually_selected_candidate`, `approved_by_user=true`, `approved_at=now`, `candidate_ids` = todos do conflito. Marca candidates do conflito `approved` (selected) / `superseded` (outros). Conflito → `resolved`.
+- `edit`: idem com `source_of_truth=manually_edited`, `field_value=manualValue`, `manual_value` salvo no conflito.
+- `ignore`: conflito → `ignored`, não muda KF. Candidates ficam `pending`.
 
-### KnowledgeField
-Tabela única que unifica DataPoint + DynamicAttribute.
-- `id`
-- `topic_id`
-- `field_name`
-- `field_type` (string | number | time | boolean | money | enum | text)
-- `field_value` (jsonb)
-- `field_origin` (`core` | `dynamic`)
-- `confidence` (0–1)
-- `source_chunk_ids` (uuid[])
-- `verified` (bool)
-- `created_at`
+## 5. Server function `approveAdditionalInfo` / `rejectAdditionalInfo`
+Atualiza `additional_info.status` e `approved_at`.
 
-> `core` = campo previsto no schema padrão do tópico (ex.: breakfast.start_time).
-> `dynamic` = campo descoberto pelo LLM que não estava no schema (ex.: vegan_options).
-> O schema padrão por tópico fica embutido como seed/constante no código — não vira tabela própria nesta versão.
+## 6. Atualizar extração (`src/lib/ai.functions.ts`)
+No modo `persist`, AdditionalInfo passa a entrar com `status='pending'`. KnowledgeCandidates continuam com `status='pending'`. **Não cria mais KnowledgeField diretamente no persist** — isso passa a ser responsabilidade de `consolidateKnowledge`. (Ajuste compatível: se já existe lógica que insere em `knowledge_fields` no persist, remover; preservar apenas inserção em `knowledge_candidates`.)
 
-### AdditionalInfo
-Texto livre que não cabe em campo estruturado.
-- `id`, `topic_id`, `content`, `source_chunk_ids` (uuid[]), `created_at`
+## 7. UI — nova aba `Consolidation` (`src/features/project/ConsolidationTab.tsx`)
+Cards no topo: `pending candidates`, `consolidated fields`, `pending conflicts`, `resolved conflicts`.
+Botão `Run Consolidation` (chama `consolidateKnowledge`) + `Re-run`.
+Conteúdo agrupado por tópico:
+- **Consolidated Fields**: tabela (`field_label`, `value`, `source_of_truth` badge, `confidence`, sources count, `approved_by_user`, ações Approve/Edit/View Sources).
+- **Pending Candidates**: tabela com Approve/Reject/View Source.
+- **Conflicts** (subseção ou tab interna "Conflicts"): card por conflito mostrando cada valor candidato (valor, confidence, extraction_method, chunks) com ações `Select this value`, `Edit manually` (input + save), `Ignore`.
 
-### ExtractionRun
-Execução de uma rodada de extração. Suporta **Dry Run**.
-- `id`, `project_id`, `raw_source_ids` (uuid[])
-- `mode` (`dry_run` | `persist`)
-- `prompt_template_id`, `model_configuration_id`
-- `status` (queued | running | done | failed)
-- `preview_result` (jsonb) — preenchido sempre; é o **único** output do dry run
-- `stats` (jsonb: chunks_processed, fields_proposed, cost_estimated)
-- `started_at`, `finished_at`
+## 8. UI — Knowledge tab refatorada (`src/features/project/KnowledgeTab.tsx`)
+Três seções:
+- **Official Knowledge**: KnowledgeFields `consolidated`, com badge de `source_of_truth`, botões `View JSON` (modal pretty) e `View Sources` (modal listando chunks: source name, content snippet, extraction_method, confidence, candidate id, run id).
+- **Needs Review**: conflitos pendentes + candidates pendentes (links para a aba Consolidation).
+- **Additional Information**: separa `approved` vs `pending`, com Approve/Reject inline.
 
-### PromptTemplates
-- `id`, `name`, `type` (`extraction` | `answer` | `topic_routing`)
-- `content`, `version`, `created_at`
+## 9. UI — Playground
+`runTestAnswer` (modo structured/hybrid) passa a ler apenas `knowledge_fields` com `consolidation_status='consolidated'` + `additional_info` com `status='approved'`. Se nenhum KF consolidado para o tópico selecionado: render aviso `"No consolidated knowledge found for this topic. Run consolidation first."` no UI antes mesmo da chamada.
 
-### ModelConfigurations
-- `id`, `provider`, `model_name`, `api_key`, `temperature`, `max_tokens`, `active`
+## 10. Roteamento
+Adicionar `Consolidation` aos tabs em `src/routes/projects/$projectId.tsx` (ou onde os tabs vivem) entre `Extractions` e `Knowledge`.
 
-> Em produção real `api_key` viria de secret; no lab fica no banco para troca rápida. Mascarar na UI.
+## 11. Fora de escopo (não implementar)
+Benchmark automático, embeddings, PDF/URL, LLM-as-judge.
 
-### LLMCalls
-Log de TODA chamada ao LLM (extração, teste, dry run). Auditoria + custo.
-- `id`, `prompt_type`, `model_name`
-- `input_tokens`, `output_tokens`, `latency`, `estimated_cost`
-- `response` (jsonb/text), `created_at`
-- (opcional) `extraction_run_id` / `test_run_id` para correlacionar
+## Entregáveis
+- 1 migração consolidada (tabelas + colunas + grants + RLS).
+- `src/lib/value-normalizer.ts`.
+- `src/lib/consolidation.functions.ts` (`consolidateKnowledge`, `approveCandidate`, `rejectCandidate`, `resolveConflict`, `approveAdditionalInfo`, `rejectAdditionalInfo`).
+- Ajuste em `src/lib/ai.functions.ts` (persist sem KF direto, AdditionalInfo pending).
+- `src/features/project/ConsolidationTab.tsx` (com seção Conflicts embutida).
+- Refator `KnowledgeTab.tsx` (Official / Needs Review / Additional Info + modais View JSON e View Sources).
+- Ajuste `PlaygroundTab.tsx` para usar só dados consolidados/aprovados.
+- Registro da nova tab no router do projeto.
 
-### TestQuestion
-- `id`, `project_id`, `question`, `expected_answer` (text, opcional), `created_at`
-
-### TestRun
-Resposta de uma pergunta em um modo de contexto.
-- `id`, `question_id`
-- `mode` (`structured` | `raw_chunks`)  — `structured` usa a base híbrida; `raw_chunks` despeja chunks brutos relacionados, como baseline manual sem RAG/embeddings (filtro simples por tópico ou keyword)
-- `prompt_template_id`, `model_configuration_id`
-- `context_sent` (jsonb), `answer` (text)
-- `llm_call_id`, `created_at`
-
-Avaliação fica como anotação humana opcional no próprio TestRun (`human_score` int, `human_notes` text). Sem tabela de avaliação automática.
-
----
-
-## 2. Relacionamentos
-
-```text
-Project 1—N RawSource 1—N RawChunk
-Project 1—N Topic N—1 TopicDefinitions
-Topic 1—N KnowledgeField
-Topic 1—N AdditionalInfo
-Project 1—N ExtractionRun
-ExtractionRun N—1 PromptTemplate
-ExtractionRun N—1 ModelConfiguration
-Project 1—N TestQuestion 1—N TestRun
-KnowledgeField/AdditionalInfo —[uuid[]]→ RawChunk  (rastreabilidade, sem FK formal)
-LLMCalls — log transversal
-```
-
----
-
-## 3. Fluxo do Usuário
-
-1. Criar **Project**.
-2. Upload de **CSV** → vira RawSource + RawChunks.
-3. Selecionar tópicos ativos do catálogo `TopicDefinitions`.
-4. Escolher `PromptTemplate` de extração + `ModelConfiguration`.
-5. **Dry Run** da extração → mostra JSON proposto + custo estimado. Nada é salvo (exceto o `ExtractionRun` com `mode=dry_run` e `preview_result`, e o `LLMCall` para auditoria de custo).
-6. Se aprovar → rodar extração em modo `persist` → grava KnowledgeFields + AdditionalInfo.
-7. **Edição/Curadoria** — usuário corrige valores, marca `verified`, adiciona/remove campos.
-8. Cadastrar **TestQuestions**.
-9. **Playground de teste** — roda a pergunta em `structured` e/ou `raw_chunks`, compara lado a lado.
-10. Anotação humana opcional no TestRun.
-
----
-
-## 4. Telas
-
-1. **Projects** — lista/criar.
-2. **Project detail** (abas):
-   - **Sources** — upload CSV, lista de RawChunks.
-   - **Topics** — ativar/desativar tópicos do catálogo.
-   - **Knowledge** — por tópico: tabela única de KnowledgeFields (badge `core`/`dynamic`, confidence, verified) + AdditionalInfo. Edição inline.
-   - **Extractions** — histórico; botão **Dry Run** e **Run**; visualizador de JSON do dry run com custo estimado.
-   - **Questions** — CRUD de TestQuestions.
-   - **Playground** — escolhe pergunta, roda nos 2 modos, vê respostas/latência/tokens/custo lado a lado.
-3. **Settings** (global do lab):
-   - **Prompt Templates** — CRUD com versionamento.
-   - **Model Configurations** — CRUD, ativar/desativar.
-   - **LLM Calls** — log com filtros (tipo, modelo, custo, período).
-
----
-
-## 5. Modo Dry Run (detalhado)
-
-Recomendação acatada. Comportamento:
-
-- Mesmo pipeline de extração, mesmo prompt, mesmo modelo.
-- Output em memória + `ExtractionRun.preview_result`:
-  ```json
-  {
-    "topic": "breakfast",
-    "fields": [
-      { "field_name": "start_time", "field_type": "time", "field_value": "06:30", "field_origin": "core", "confidence": 0.92, "source_chunk_ids": ["..."] },
-      { "field_name": "vegan_options", "field_type": "boolean", "field_value": true, "field_origin": "dynamic", "confidence": 0.78, "source_chunk_ids": ["..."] }
-    ],
-    "additional_info": ["Café servido no terraço aos domingos."]
-  }
-  ```
-- **Nada** entra em `KnowledgeField` / `AdditionalInfo`.
-- `LLMCall` é gravado (precisamos saber quanto custou o experimento).
-- UI: botão "Promote to persist" reaproveita o `preview_result` sem chamar o LLM de novo → economia real.
-
----
-
-## 6. Arquitetura do Banco
-
-- Postgres (Lovable Cloud), sem pgvector.
-- `field_value` e `preview_result` em `jsonb`.
-- `source_chunk_ids` como `uuid[]`.
-- Índices: `(project_id)` nas tabelas-filhas; `(topic_id, field_origin)` em KnowledgeField; `(created_at)` em LLMCalls.
-- Seeds:
-  - `TopicDefinitions` com catálogo hoteleiro (breakfast, check_in, pool, parking, restaurant, gym, wifi, transfer…).
-  - Schema `core` por tópico embutido em código (constantes TS), usado pelo prompt de extração e pela UI para distinguir core vs dynamic.
-  - `PromptTemplates` v1 para `extraction` e `answer`.
-  - `ModelConfigurations` com 1 default ativo (Lovable AI Gateway).
-- Sem RLS estrito (sem multi-tenancy); proteção só por auth do laboratório.
-
----
-
-## 7. Pipeline (sem RAG)
-
-**Extração**
-1. Agrupa RawChunks (todos do source, ou por heurística simples de keyword/tópico).
-2. Para cada tópico ativo: monta prompt com (schema core do tópico + chunks candidatos).
-3. LLM devolve JSON com fields `core` preenchidos + propostas `dynamic` + additional_info.
-4. Valida com Zod.
-5. Se `mode=persist`: upsert em KnowledgeField/AdditionalInfo.
-6. Sempre: registra LLMCall e atualiza ExtractionRun.stats.
-
-**Teste**
-- `structured`: serializa KnowledgeFields + AdditionalInfo do(s) tópico(s) relevantes como contexto compacto → LLM responde.
-- `raw_chunks`: seleciona chunks por filtro simples (keyword/tópico marcado manualmente) → LLM responde. Baseline honesto sem precisar de embeddings.
-
----
-
-## 8. Possíveis Problemas
-
-- **Roteamento de tópico da pergunta** sem embeddings: vai por keyword/alias do `TopicDefinitions.aliases`. Pode errar; aceitável no MVP, logar quando errar.
-- **Schema core embutido em código** acelera, mas mudanças exigem deploy. Trade-off consciente.
-- **api_key em ModelConfigurations**: risco se exposto na UI. Mascarar e não retornar no client.
-- **Custo da extração em CSVs grandes**: Dry Run mitiga; adicionar limite de chunks por run.
-- **Conflito entre chunks** (preço antigo vs novo): mantém múltiplos KnowledgeFields com mesmo `field_name`; curadoria humana decide qual fica `verified`.
-- **Comparação enviesada** no playground se o modo `raw_chunks` mandar contexto gigante: limitar nº de chunks por padrão.
-
----
-
-## 9. Possíveis Melhorias (pós-MVP)
-
-- Promover `dynamic` → `core` quando recorrente (vira sugestão de schema).
-- Versionamento temporal de KnowledgeFields.
-- Reaproveitar `preview_result` do Dry Run direto no persist (já previsto acima).
-- LLM-as-judge opcional para escala (fora do MVP).
-- Diff entre ExtractionRuns.
-- Adicionar PDF/URL como RawSource.
-
----
-
-Aprove para eu implementar nesta arquitetura, ou peça ajustes.
+Aprove para eu executar a migração e a implementação.

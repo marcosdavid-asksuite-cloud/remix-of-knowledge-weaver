@@ -7,6 +7,7 @@ import { SourcesTab } from "@/features/project/SourcesTab";
 import { TopicsTab } from "@/features/project/TopicsTab";
 import { KnowledgeTab } from "@/features/project/KnowledgeTab";
 import { ExtractionsTab } from "@/features/project/ExtractionsTab";
+import { ConsolidationTab } from "@/features/project/ConsolidationTab";
 import { QuestionsTab } from "@/features/project/QuestionsTab";
 import { PlaygroundTab } from "@/features/project/PlaygroundTab";
 import { Button } from "@/components/ui/button";

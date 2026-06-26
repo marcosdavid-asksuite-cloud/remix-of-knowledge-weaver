@@ -37,6 +37,23 @@ export function PlaygroundTab({ projectId }: { projectId: string }) {
     },
   });
 
+  const { data: consolidatedCount } = useQuery({
+    queryKey: ["consolidated_count", projectId],
+    queryFn: async () => {
+      const { data: topics } = await supabase
+        .from("topics").select("id").eq("project_id", projectId);
+      const ids = (topics ?? []).map((t) => t.id);
+      if (ids.length === 0) return 0;
+      const { count } = await supabase
+        .from("knowledge_fields")
+        .select("*", { count: "exact", head: true })
+        .in("topic_id", ids)
+        .eq("consolidation_status", "consolidated");
+      return count ?? 0;
+    },
+  });
+
+
   async function run(mode: "structured" | "raw_chunks") {
     if (!selectedQ) { toast.error("Escolha uma pergunta"); return; }
     setBusy(mode);
@@ -70,6 +87,13 @@ export function PlaygroundTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-6">
+      {consolidatedCount === 0 && (
+        <div className="rounded border border-amber-500/50 bg-amber-500/5 p-3 text-sm">
+          <strong>No consolidated knowledge found.</strong> O modo <code>structured</code> usa
+          apenas KnowledgeFields consolidados e AdditionalInfo aprovadas — rode a
+          consolidação na aba <strong>Consolidation</strong> primeiro.
+        </div>
+      )}
       <Card>
         <CardHeader><CardTitle className="text-base">Pergunta</CardTitle></CardHeader>
         <CardContent>
