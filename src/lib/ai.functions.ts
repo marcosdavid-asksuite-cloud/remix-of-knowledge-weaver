@@ -198,7 +198,7 @@ export const runExtraction = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const sb = getSb();
 
-    const sb = getSb();
+
 
     // Project + sources + chunks
     const { data: project } = await sb
