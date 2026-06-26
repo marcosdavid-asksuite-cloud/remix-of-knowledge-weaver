@@ -277,6 +277,14 @@ function EditDialog({
   const [description, setDescription] = useState(existing?.description ?? "");
   const [required, setRequired] = useState(existing?.required ?? false);
   const [active, setActive] = useState(existing?.active ?? true);
+  const [strategy, setStrategy] = useState<Strategy>(existing?.extraction_strategy ?? "llm");
+  const [regexPattern, setRegexPattern] = useState(existing?.regex_pattern ?? "");
+  const [keywordsJson, setKeywordsJson] = useState(
+    existing?.keywords ? JSON.stringify(existing.keywords, null, 2) : "{}",
+  );
+  const [negativeJson, setNegativeJson] = useState(
+    existing?.negative_keywords ? JSON.stringify(existing.negative_keywords, null, 2) : "[]",
+  );
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -284,6 +292,12 @@ function EditDialog({
       toast.error("Preencha field name e label");
       return;
     }
+    let keywordsParsed: unknown = {};
+    let negativeParsed: unknown = [];
+    try { keywordsParsed = JSON.parse(keywordsJson || "{}"); }
+    catch { toast.error("Keywords não é JSON válido"); return; }
+    try { negativeParsed = JSON.parse(negativeJson || "[]"); }
+    catch { toast.error("Negative keywords não é JSON válido"); return; }
     setSaving(true);
     const payload = {
       topic_definition_id: topicId,
@@ -293,13 +307,17 @@ function EditDialog({
       description: description.trim() || null,
       required,
       active,
+      extraction_strategy: strategy,
+      regex_pattern: regexPattern.trim() || null,
+      keywords: keywordsParsed,
+      negative_keywords: negativeParsed,
     };
     const { error } = existing
       ? await supabase
           .from("data_point_definitions")
-          .update(payload)
+          .update(payload as never)
           .eq("id", existing.id)
-      : await supabase.from("data_point_definitions").insert(payload);
+      : await supabase.from("data_point_definitions").insert(payload as never);
     setSaving(false);
     if (error) {
       toast.error(error.message);
