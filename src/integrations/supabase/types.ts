@@ -620,27 +620,139 @@ export type Database = {
           },
         ]
       }
-      test_questions: {
+      test_batches: {
         Row: {
           created_at: string
-          expected_answer: string | null
+          finished_at: string | null
           id: string
+          model_name: string | null
+          modes: string[]
+          name: string
+          options: Json
           project_id: string
-          question: string
+          question_count: number
+          started_at: string
+          statistics: Json
+          status: string
+          temperature: number | null
         }
         Insert: {
           created_at?: string
-          expected_answer?: string | null
+          finished_at?: string | null
           id?: string
+          model_name?: string | null
+          modes?: string[]
+          name: string
+          options?: Json
           project_id: string
-          question: string
+          question_count?: number
+          started_at?: string
+          statistics?: Json
+          status?: string
+          temperature?: number | null
         }
         Update: {
           created_at?: string
+          finished_at?: string | null
+          id?: string
+          model_name?: string | null
+          modes?: string[]
+          name?: string
+          options?: Json
+          project_id?: string
+          question_count?: number
+          started_at?: string
+          statistics?: Json
+          status?: string
+          temperature?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "test_batches_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      test_evaluations: {
+        Row: {
+          completeness_score: number | null
+          created_at: string
+          evaluator: string
+          hallucination_score: number | null
+          id: string
+          latency_score: number | null
+          notes: string | null
+          precision_score: number | null
+          test_run_id: string
+          usefulness_score: number | null
+        }
+        Insert: {
+          completeness_score?: number | null
+          created_at?: string
+          evaluator?: string
+          hallucination_score?: number | null
+          id?: string
+          latency_score?: number | null
+          notes?: string | null
+          precision_score?: number | null
+          test_run_id: string
+          usefulness_score?: number | null
+        }
+        Update: {
+          completeness_score?: number | null
+          created_at?: string
+          evaluator?: string
+          hallucination_score?: number | null
+          id?: string
+          latency_score?: number | null
+          notes?: string | null
+          precision_score?: number | null
+          test_run_id?: string
+          usefulness_score?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "test_evaluations_test_run_id_fkey"
+            columns: ["test_run_id"]
+            isOneToOne: false
+            referencedRelation: "test_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      test_questions: {
+        Row: {
+          active: boolean
+          created_at: string
+          expected_answer: string | null
+          expected_facts: Json
+          id: string
+          project_id: string
+          question: string
+          topic_definition_ids: string[]
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
           expected_answer?: string | null
+          expected_facts?: Json
+          id?: string
+          project_id: string
+          question: string
+          topic_definition_ids?: string[]
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          expected_answer?: string | null
+          expected_facts?: Json
           id?: string
           project_id?: string
           question?: string
+          topic_definition_ids?: string[]
         }
         Relationships: [
           {
@@ -657,40 +769,67 @@ export type Database = {
           answer: string | null
           context_sent: Json | null
           created_at: string
+          error_message: string | null
+          estimated_cost: number | null
           human_notes: string | null
           human_score: number | null
           id: string
+          input_tokens: number | null
+          latency_ms: number | null
           llm_call_id: string | null
           mode: string
           model_configuration_id: string | null
+          model_name: string | null
+          output_tokens: number | null
+          project_id: string | null
           prompt_template_id: string | null
           question_id: string
+          status: string
+          test_batch_id: string | null
         }
         Insert: {
           answer?: string | null
           context_sent?: Json | null
           created_at?: string
+          error_message?: string | null
+          estimated_cost?: number | null
           human_notes?: string | null
           human_score?: number | null
           id?: string
+          input_tokens?: number | null
+          latency_ms?: number | null
           llm_call_id?: string | null
           mode: string
           model_configuration_id?: string | null
+          model_name?: string | null
+          output_tokens?: number | null
+          project_id?: string | null
           prompt_template_id?: string | null
           question_id: string
+          status?: string
+          test_batch_id?: string | null
         }
         Update: {
           answer?: string | null
           context_sent?: Json | null
           created_at?: string
+          error_message?: string | null
+          estimated_cost?: number | null
           human_notes?: string | null
           human_score?: number | null
           id?: string
+          input_tokens?: number | null
+          latency_ms?: number | null
           llm_call_id?: string | null
           mode?: string
           model_configuration_id?: string | null
+          model_name?: string | null
+          output_tokens?: number | null
+          project_id?: string | null
           prompt_template_id?: string | null
           question_id?: string
+          status?: string
+          test_batch_id?: string | null
         }
         Relationships: [
           {
@@ -719,6 +858,13 @@ export type Database = {
             columns: ["question_id"]
             isOneToOne: false
             referencedRelation: "test_questions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "test_runs_test_batch_id_fkey"
+            columns: ["test_batch_id"]
+            isOneToOne: false
+            referencedRelation: "test_batches"
             referencedColumns: ["id"]
           },
         ]
