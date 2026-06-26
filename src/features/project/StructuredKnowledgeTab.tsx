@@ -11,6 +11,8 @@ import { Switch } from "@/components/ui/switch";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { extractTopicAggregated } from "@/lib/ai.functions";
+
 
 const TOPIC_EMOJI: Record<string, string> = {
   breakfast: "☕", checkin: "🛎️", checkout: "🧳", parking: "🚗",
@@ -57,6 +59,8 @@ type Addl = {
 
 export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [reextractingAll, setReextractingAll] = useState(false);
+  const qc = useQueryClient();
 
   const { data: topics } = useQuery({
     queryKey: ["sk_topics", projectId],
@@ -128,8 +132,33 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
     return <p className="text-sm text-muted-foreground">Nenhum tópico ativo. Vá em Settings e ative tópicos.</p>;
   }
 
+  async function reextractAll() {
+    setReextractingAll(true);
+    try {
+      const res = await extractTopicAggregated({ data: { projectId } });
+      const filled = res.topics.reduce((acc, t) => acc + t.core_filled, 0);
+      const total = res.topics.reduce((acc, t) => acc + t.core_total, 0);
+      toast.success(`Re-extração concluída · ${filled}/${total} campos preenchidos`);
+      qc.invalidateQueries({ queryKey: ["sk_fields", projectId] });
+      qc.invalidateQueries({ queryKey: ["sk_addls", projectId] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReextractingAll(false);
+    }
+  }
+
   return (
-    <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground">
+          Cada tópico agrega todos os chunks relevantes antes de chamar a LLM — captura mais detalhes e fica mais barato.
+        </p>
+        <Button size="sm" variant="outline" onClick={reextractAll} disabled={reextractingAll}>
+          {reextractingAll ? "Re-extraindo todos…" : "Re-extrair todos os tópicos"}
+        </Button>
+      </div>
+      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Tópicos</CardTitle>
@@ -170,6 +199,7 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
           addls={(addls ?? []).filter((a) => a.topic_id === currentTopic.id)}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -192,8 +222,31 @@ function TopicEditor({
   const [coreBooleans, setCoreBooleans] = useState<Record<string, boolean>>({});
   const [addlText, setAddlText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [reextracting, setReextracting] = useState(false);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+
+  const coreFilled = dpds.filter((d) => fields.some((f) => f.field_name === d.field_name && f.field_origin === "core" && f.field_value != null && f.field_value !== "")).length;
+
+  async function reextract() {
+    setReextracting(true);
+    try {
+      const res = await extractTopicAggregated({ data: { projectId, topicSlug: slug } });
+      const r = res.topics[0];
+      if (r) {
+        toast.success(`Re-extraído: ${r.core_filled}/${r.core_total} campos · ${r.chunks_used} chunks · +${r.additional_info_chars} chars de narrativa`);
+      } else {
+        toast.message("Re-extração concluída");
+      }
+      qc.invalidateQueries({ queryKey: ["sk_fields", projectId] });
+      qc.invalidateQueries({ queryKey: ["sk_addls", projectId] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReextracting(false);
+    }
+  }
+
 
   useEffect(() => {
     const initStr: Record<string, string> = {};
@@ -327,12 +380,20 @@ function TopicEditor({
               <span>{TOPIC_EMOJI[slug] ?? "📁"}</span>
               {name}
               <Badge variant="outline" className="font-mono text-[10px]">{slug}</Badge>
+              {dpds.length > 0 && (
+                <Badge variant={coreFilled === dpds.length ? "default" : "secondary"} className="text-[10px]">
+                  {coreFilled}/{dpds.length} campos
+                </Badge>
+              )}
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
               Core Information são os campos oficiais. Informações adicionais é texto livre que complementa a base.
             </p>
           </div>
           <div className="flex gap-1">
+            <Button variant="default" size="sm" onClick={reextract} disabled={reextracting}>
+              {reextracting ? "Re-extraindo…" : "Re-extrair tópico"}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setSourcesOpen(true)}>
               Source Chunks ({allSourceChunks.length})
             </Button>
