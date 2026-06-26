@@ -199,6 +199,7 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
           addls={(addls ?? []).filter((a) => a.topic_id === currentTopic.id)}
         />
       )}
+      </div>
     </div>
   );
 }
