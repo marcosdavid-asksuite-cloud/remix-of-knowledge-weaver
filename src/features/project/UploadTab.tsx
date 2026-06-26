@@ -62,7 +62,7 @@ export function UploadTab({ projectId }: { projectId: string }) {
       setProcessStep("Ativando tópicos…");
       // Auto-activate all topic_definitions for this project (idempotent).
       const { data: defs } = await supabase
-        .from("topic_definitions").select("id").eq("active", true);
+        .from("topic_definitions").select("id");
       const { data: existing } = await supabase
         .from("topics").select("topic_definition_id").eq("project_id", projectId);
       const have = new Set((existing ?? []).map((e) => e.topic_definition_id));
