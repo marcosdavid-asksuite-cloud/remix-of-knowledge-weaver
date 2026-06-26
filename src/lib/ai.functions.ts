@@ -247,6 +247,26 @@ function removeCoreFactsFromAdditionalInfo(
   return cleaned.join(" ").trim();
 }
 
+function topicRelevantSnippet(text: string, topic: TopicLite): string {
+  const sentences = sentenceSplit(text);
+  if (sentences.length <= 2) return text;
+
+  const keep = new Set<number>();
+  sentences.forEach((sentence, index) => {
+    if (aliasMatch(sentence, [topic]).length > 0) {
+      keep.add(index);
+      if (index + 1 < sentences.length) keep.add(index + 1);
+    }
+  });
+
+  if (keep.size === 0) return text;
+  return Array.from(keep)
+    .sort((a, b) => a - b)
+    .map((index) => sentences[index])
+    .join(" ")
+    .trim();
+}
+
 async function assertDb<T>(
   op: PromiseLike<{ data: T | null; error: { message: string } | null }>,
   label: string,
@@ -864,7 +884,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       let inT = 0, outT = 0;
 
       const combinedText = useChunks
-        .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${c.content.slice(0, CHUNK_CHAR_CAP)}`)
+        .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${topicRelevantSnippet(c.content, topic).slice(0, CHUNK_CHAR_CAP)}`)
         .join("\n---\n")
         .slice(0, 14000);
 
