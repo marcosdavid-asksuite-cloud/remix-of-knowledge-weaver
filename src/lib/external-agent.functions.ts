@@ -19,15 +19,16 @@ function getByPath(obj: unknown, path: string): unknown {
   }, obj);
 }
 
+type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 export type CallExternalAgentResult = {
   content: string;
   latency: number;
   inputTokens: number | null;
   outputTokens: number | null;
   estimatedCost: number | null;
-  rawResponse: unknown;
-  requestPayload: unknown;
-  requestHeaders: Record<string, string>; // already masked
+  rawResponse: Json;
+  requestPayload: Json;
+  requestHeaders: Record<string, string>;
 };
 
 export const callExternalAgent = createServerFn({ method: "POST" })
