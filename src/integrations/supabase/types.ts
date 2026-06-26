@@ -51,10 +51,15 @@ export type Database = {
           active: boolean
           created_at: string
           description: string | null
+          extraction_examples: Json
+          extraction_strategy: string
           field_label: string
           field_name: string
           field_type: string
           id: string
+          keywords: Json
+          negative_keywords: Json
+          regex_pattern: string | null
           required: boolean
           topic_definition_id: string
           updated_at: string
@@ -63,10 +68,15 @@ export type Database = {
           active?: boolean
           created_at?: string
           description?: string | null
+          extraction_examples?: Json
+          extraction_strategy?: string
           field_label: string
           field_name: string
           field_type: string
           id?: string
+          keywords?: Json
+          negative_keywords?: Json
+          regex_pattern?: string | null
           required?: boolean
           topic_definition_id: string
           updated_at?: string
@@ -75,10 +85,15 @@ export type Database = {
           active?: boolean
           created_at?: string
           description?: string | null
+          extraction_examples?: Json
+          extraction_strategy?: string
           field_label?: string
           field_name?: string
           field_type?: string
           id?: string
+          keywords?: Json
+          negative_keywords?: Json
+          regex_pattern?: string | null
           required?: boolean
           topic_definition_id?: string
           updated_at?: string
@@ -173,6 +188,7 @@ export type Database = {
           system_prompt: string
           temperature: number
           updated_at: string
+          use_llm_for_dynamic: boolean
         }
         Insert: {
           chunk_size?: number
@@ -183,6 +199,7 @@ export type Database = {
           system_prompt: string
           temperature?: number
           updated_at?: string
+          use_llm_for_dynamic?: boolean
         }
         Update: {
           chunk_size?: number
@@ -193,6 +210,7 @@ export type Database = {
           system_prompt?: string
           temperature?: number
           updated_at?: string
+          use_llm_for_dynamic?: boolean
         }
         Relationships: []
       }
@@ -200,6 +218,7 @@ export type Database = {
         Row: {
           confidence: number | null
           created_at: string
+          extraction_method: string
           extraction_run_id: string | null
           field_name: string
           field_origin: string
@@ -214,6 +233,7 @@ export type Database = {
         Insert: {
           confidence?: number | null
           created_at?: string
+          extraction_method?: string
           extraction_run_id?: string | null
           field_name: string
           field_origin: string
@@ -228,6 +248,7 @@ export type Database = {
         Update: {
           confidence?: number | null
           created_at?: string
+          extraction_method?: string
           extraction_run_id?: string | null
           field_name?: string
           field_origin?: string
