@@ -321,17 +321,10 @@ export const runBenchmark = createServerFn({ method: "POST" })
     const includeAdditional = data.includeAdditional ?? true;
 
     // Load external agent if needed
-    let externalAgent: {
-      id: string; name: string; endpoint: string; auth_type: string;
-      auth_header_name: string | null; api_key: string | null;
-      custom_headers: Record<string, string>; model: string | null;
-      temperature: number | null; timeout_ms: number | null;
-      payload_template: unknown; response_path: string | null;
-      context_options: { structured?: boolean; additional?: boolean; raw_chunks?: boolean };
-    } | null = null;
+    let externalAgent: ExternalAgentRow | null = null;
     if (data.externalAgentId) {
       const { data: ea } = await sb.from("external_agents").select("*").eq("id", data.externalAgentId).maybeSingle();
-      if (ea) externalAgent = ea as unknown as typeof externalAgent;
+      if (ea) externalAgent = ea as unknown as ExternalAgentRow;
     }
 
     // Topics for the project.
