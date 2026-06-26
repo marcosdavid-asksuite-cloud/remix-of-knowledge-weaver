@@ -10,6 +10,7 @@ import { ExtractionsTab } from "@/features/project/ExtractionsTab";
 import { ConsolidationTab } from "@/features/project/ConsolidationTab";
 import { QuestionsTab } from "@/features/project/QuestionsTab";
 import { PlaygroundTab } from "@/features/project/PlaygroundTab";
+import { BenchmarkTab } from "@/features/project/BenchmarkTab";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/projects/$projectId")({
@@ -54,16 +55,20 @@ function ProjectDetail() {
           <TabsTrigger value="sources">Sources</TabsTrigger>
           <TabsTrigger value="topics">Topics</TabsTrigger>
           <TabsTrigger value="extractions">Extractions</TabsTrigger>
+          <TabsTrigger value="consolidation">Consolidation</TabsTrigger>
           <TabsTrigger value="knowledge">Knowledge</TabsTrigger>
           <TabsTrigger value="questions">Questions</TabsTrigger>
           <TabsTrigger value="playground">Playground</TabsTrigger>
+          <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
         </TabsList>
         <TabsContent value="sources" className="mt-6"><SourcesTab projectId={projectId} /></TabsContent>
         <TabsContent value="topics" className="mt-6"><TopicsTab projectId={projectId} /></TabsContent>
         <TabsContent value="extractions" className="mt-6"><ExtractionsTab projectId={projectId} /></TabsContent>
+        <TabsContent value="consolidation" className="mt-6"><ConsolidationTab projectId={projectId} /></TabsContent>
         <TabsContent value="knowledge" className="mt-6"><KnowledgeTab projectId={projectId} /></TabsContent>
         <TabsContent value="questions" className="mt-6"><QuestionsTab projectId={projectId} /></TabsContent>
         <TabsContent value="playground" className="mt-6"><PlaygroundTab projectId={projectId} /></TabsContent>
+        <TabsContent value="benchmark" className="mt-6"><BenchmarkTab projectId={projectId} /></TabsContent>
       </Tabs>
     </AppShell>
   );
