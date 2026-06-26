@@ -16,24 +16,30 @@ export type Database = {
     Tables: {
       additional_info: {
         Row: {
+          approved_at: string | null
           content: string
           created_at: string
           id: string
           source_chunk_ids: string[]
+          status: string
           topic_id: string
         }
         Insert: {
+          approved_at?: string | null
           content: string
           created_at?: string
           id?: string
           source_chunk_ids?: string[]
+          status?: string
           topic_id: string
         }
         Update: {
+          approved_at?: string | null
           content?: string
           created_at?: string
           id?: string
           source_chunk_ids?: string[]
+          status?: string
           topic_id?: string
         }
         Relationships: [
@@ -284,9 +290,83 @@ export type Database = {
           },
         ]
       }
+      knowledge_conflicts: {
+        Row: {
+          candidate_ids: string[]
+          conflict_type: string
+          created_at: string
+          field_name: string
+          field_type: string
+          id: string
+          manual_value: Json | null
+          project_id: string
+          resolution_note: string | null
+          resolved_at: string | null
+          selected_candidate_id: string | null
+          status: string
+          topic_definition_id: string
+        }
+        Insert: {
+          candidate_ids?: string[]
+          conflict_type?: string
+          created_at?: string
+          field_name: string
+          field_type: string
+          id?: string
+          manual_value?: Json | null
+          project_id: string
+          resolution_note?: string | null
+          resolved_at?: string | null
+          selected_candidate_id?: string | null
+          status?: string
+          topic_definition_id: string
+        }
+        Update: {
+          candidate_ids?: string[]
+          conflict_type?: string
+          created_at?: string
+          field_name?: string
+          field_type?: string
+          id?: string
+          manual_value?: Json | null
+          project_id?: string
+          resolution_note?: string | null
+          resolved_at?: string | null
+          selected_candidate_id?: string | null
+          status?: string
+          topic_definition_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "knowledge_conflicts_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_conflicts_selected_candidate_id_fkey"
+            columns: ["selected_candidate_id"]
+            isOneToOne: false
+            referencedRelation: "knowledge_candidates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "knowledge_conflicts_topic_definition_id_fkey"
+            columns: ["topic_definition_id"]
+            isOneToOne: false
+            referencedRelation: "topic_definitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       knowledge_fields: {
         Row: {
+          approved_at: string | null
+          approved_by_user: boolean
+          candidate_ids: string[]
           confidence: number | null
+          consolidation_status: string
           created_at: string
           field_name: string
           field_origin: string
@@ -294,11 +374,16 @@ export type Database = {
           field_value: Json | null
           id: string
           source_chunk_ids: string[]
+          source_of_truth: string
           topic_id: string
           verified: boolean
         }
         Insert: {
+          approved_at?: string | null
+          approved_by_user?: boolean
+          candidate_ids?: string[]
           confidence?: number | null
+          consolidation_status?: string
           created_at?: string
           field_name: string
           field_origin: string
@@ -306,11 +391,16 @@ export type Database = {
           field_value?: Json | null
           id?: string
           source_chunk_ids?: string[]
+          source_of_truth?: string
           topic_id: string
           verified?: boolean
         }
         Update: {
+          approved_at?: string | null
+          approved_by_user?: boolean
+          candidate_ids?: string[]
           confidence?: number | null
+          consolidation_status?: string
           created_at?: string
           field_name?: string
           field_origin?: string
@@ -318,6 +408,7 @@ export type Database = {
           field_value?: Json | null
           id?: string
           source_chunk_ids?: string[]
+          source_of_truth?: string
           topic_id?: string
           verified?: boolean
         }
