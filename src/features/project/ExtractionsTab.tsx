@@ -90,7 +90,8 @@ export function ExtractionsTab({ projectId }: { projectId: string }) {
     if (mode === "persist" && !confirm("Persistir resultados na base. Continuar?")) return;
     setBusy(mode);
     try {
-      const res = await extractFn({ data: { projectId, mode } });
+      const modelOverride = getExtractionModelOverride(projectId);
+      const res = await extractFn({ data: { projectId, mode, modelOverride } });
       const preview = res.preview as unknown as Preview;
       setLastPreview(preview);
       setLastMode(mode);
