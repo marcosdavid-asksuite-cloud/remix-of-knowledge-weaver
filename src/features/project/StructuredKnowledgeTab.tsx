@@ -525,15 +525,22 @@ function TopicEditor({
               Core Information são os campos oficiais. Informações adicionais é texto livre que complementa a base.
             </p>
           </div>
-          <div className="flex gap-1">
-            <Button variant="default" size="sm" onClick={reextract} disabled={reextracting}>
-              {reextracting ? "Re-extraindo…" : "Re-extrair tópico"}
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setSourcesOpen(true)}>
-              Source Chunks ({allSourceChunks.length})
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setJsonOpen(true)}>View JSON</Button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex gap-1">
+              <Button variant="default" size="sm" onClick={reextract} disabled={reextracting}>
+                {reextracting ? "Re-extraindo…" : "Re-extrair tópico"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setSourcesOpen(true)}>
+                Source Chunks ({allSourceChunks.length})
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setJsonOpen(true)}>View JSON</Button>
+            </div>
+            <span className="text-[10px] text-muted-foreground">
+              Custo estimado: <strong>{formatUsd(extractionCost)}</strong>
+              <span className="ml-1 opacity-70">· {extractionChunks} chunk{extractionChunks === 1 ? "" : "s"} · {costModel}</span>
+            </span>
           </div>
+
         </CardHeader>
       </Card>
 
