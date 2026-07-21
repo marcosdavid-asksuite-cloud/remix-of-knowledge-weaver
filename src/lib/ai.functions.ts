@@ -497,11 +497,11 @@ export const runExtraction = createServerFn({ method: "POST" })
         let via: "alias" | "llm" | "none" = "alias";
         if (matched.length === 0) {
           // Step 2: LLM classification
-          const c = await classifyChunkWithLLM(chunk.content, topics, modelCfg.model_name, Number(modelCfg.temperature));
+          const c = await classifyChunkWithLLM(chunk.content, topics, effModel, effTemp);
           totalIn += c.inT; totalOut += c.outT; totalCost += c.cost; totalLatency += c.latency;
           await sb.from("llm_calls").insert({
             prompt_type: "classify",
-            model_name: modelCfg.model_name,
+            model_name: effModel,
             input_tokens: c.inT, output_tokens: c.outT, latency: c.latency, estimated_cost: c.cost,
             extraction_run_id: run.id,
           });
