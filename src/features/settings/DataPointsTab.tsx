@@ -1,9 +1,7 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { getDataPointStats } from "@/lib/analytics.functions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 import { Button } from "@/components/ui/button";
@@ -20,7 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload } from "lucide-react";
 
 const FIELD_TYPES = [
   "text",
@@ -34,8 +32,9 @@ const FIELD_TYPES = [
 ] as const;
 type FieldType = (typeof FIELD_TYPES)[number];
 
-const STRATEGIES = ["regex", "keyword", "hybrid", "llm"] as const;
-type Strategy = (typeof STRATEGIES)[number];
+// Default strategy for all new data points: keyword-first with LLM fallback.
+// The fallback behavior is specified in the extraction prompt.
+const DEFAULT_STRATEGY = "hybrid" as const;
 
 type Dpd = {
   id: string;
@@ -46,10 +45,26 @@ type Dpd = {
   description: string | null;
   required: boolean;
   active: boolean;
-  extraction_strategy: Strategy;
+  extraction_strategy: string;
   regex_pattern: string | null;
   keywords: unknown;
   negative_keywords: unknown;
+};
+
+type TopicRow = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+};
+
+type PreviewRow = {
+  topic_slug: string;
+  topic_name?: string;
+  field_name: string;
+  field_label: string;
+  field_type: FieldType;
+  description: string | null;
 };
 
 const TOPIC_EMOJI: Record<string, string> = {
@@ -70,6 +85,10 @@ const TOPIC_EMOJI: Record<string, string> = {
 export function DataPointsTab() {
   const qc = useQueryClient();
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PreviewRow[] | null>(null);
+  const [previewTopicSlug, setPreviewTopicSlug] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: topics } = useQuery({
     queryKey: ["topic_definitions"],
@@ -79,7 +98,7 @@ export function DataPointsTab() {
         .select("*")
         .order("name");
       if (error) throw error;
-      return data;
+      return data as TopicRow[];
     },
   });
 
@@ -95,15 +114,7 @@ export function DataPointsTab() {
     },
   });
 
-  const fetchStats = useServerFn(getDataPointStats);
-  const { data: stats } = useQuery({
-    queryKey: ["data-point-stats"],
-    queryFn: () => fetchStats({ data: {} }),
-  });
-
-  const currentTopicId =
-    selectedTopicId ?? topics?.[0]?.id ?? null;
-
+  const currentTopicId = selectedTopicId ?? topics?.[0]?.id ?? null;
   const currentTopic = topics?.find((t) => t.id === currentTopicId);
   const topicDps = (dps ?? []).filter(
     (d) => d.topic_definition_id === currentTopicId,
@@ -113,171 +124,462 @@ export function DataPointsTab() {
     qc.invalidateQueries({ queryKey: ["data_point_definitions"] });
   }
 
-  return (
-    <div className="grid gap-4 md:grid-cols-[260px_1fr]">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Tópicos</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1">
-          {(topics ?? []).map((t) => {
-            const count = (dps ?? []).filter(
-              (d) => d.topic_definition_id === t.id,
-            ).length;
-            const active = t.id === currentTopicId;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setSelectedTopicId(t.id)}
-                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
-                  active ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <span>{TOPIC_EMOJI[t.slug] ?? "📁"}</span>
-                  <span>{t.name}</span>
-                </span>
-                <Badge variant="outline" className="text-[10px]">
-                  {count}
-                </Badge>
-              </button>
-            );
-          })}
-        </CardContent>
-      </Card>
+  async function handleFile(file: File) {
+    try {
+      const text = await file.text();
+      let rows: PreviewRow[] = [];
+      if (file.name.toLowerCase().endsWith(".json")) {
+        rows = parseJsonInput(text);
+      } else {
+        rows = parseCsvInput(text);
+      }
+      if (rows.length === 0) {
+        toast.error("Nenhum campo válido encontrado no arquivo");
+        return;
+      }
+      setPreview(rows);
+      setPreviewTopicSlug(rows[0].topic_slug);
+      toast.success(`${rows.length} campo(s) carregado(s) do arquivo`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`Falha ao ler arquivo: ${msg}`);
+    } finally {
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
 
+  async function importPreview() {
+    if (!preview || !topics) return;
+    setImporting(true);
+    const topicBySlug = new Map(topics.map((t) => [t.slug, t] as const));
+    const topicByName = new Map(topics.map((t) => [t.name.toLowerCase(), t] as const));
+    const payload = preview
+      .map((r) => {
+        const topic =
+          topicBySlug.get(r.topic_slug) ??
+          (r.topic_name ? topicByName.get(r.topic_name.toLowerCase()) : undefined);
+        if (!topic) return null;
+        return {
+          topic_definition_id: topic.id,
+          field_name: r.field_name,
+          field_label: r.field_label,
+          field_type: r.field_type,
+          description: r.description,
+          required: false,
+          active: true,
+          extraction_strategy: DEFAULT_STRATEGY,
+          regex_pattern: null,
+          keywords: {},
+          negative_keywords: [],
+        };
+      })
+      .filter(Boolean) as Array<Record<string, unknown>>;
+
+    if (payload.length === 0) {
+      setImporting(false);
+      toast.error("Nenhum tópico correspondente encontrado para os campos importados");
+      return;
+    }
+
+    const skipped = preview.length - payload.length;
+    const { error } = await supabase
+      .from("data_point_definitions")
+      .insert(payload as never);
+    setImporting(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success(
+      `Importados ${payload.length} campo(s)${skipped ? ` · ${skipped} ignorado(s) por tópico inexistente` : ""}`,
+    );
+    setPreview(null);
+    setPreviewTopicSlug(null);
+    refresh();
+  }
+
+  const previewTopics = useMemo(() => {
+    if (!preview) return [] as Array<{ slug: string; name: string; count: number }>;
+    const bySlug = new Map<string, { slug: string; name: string; count: number }>();
+    for (const r of preview) {
+      const key = r.topic_slug;
+      const existing = bySlug.get(key);
+      if (existing) existing.count++;
+      else bySlug.set(key, { slug: key, name: r.topic_name ?? r.topic_slug, count: 1 });
+    }
+    return Array.from(bySlug.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [preview]);
+
+  const previewRows = preview?.filter((r) => r.topic_slug === previewTopicSlug) ?? [];
+
+  return (
+    <div className="space-y-4">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-base">
-              {currentTopic
-                ? `Data Points · ${currentTopic.name}`
-                : "Data Points"}
-            </CardTitle>
-            {currentTopic && (
-              <p className="mt-1 font-mono text-xs text-muted-foreground">
-                {currentTopic.slug}
-              </p>
-            )}
-          </div>
-          {currentTopicId && (
-            <EditDialog
-              topicId={currentTopicId}
-              onSaved={refresh}
-              trigger={
-                <Button size="sm">
-                  <Plus className="size-4" /> Novo
-                </Button>
-              }
-            />
-          )}
-        </CardHeader>
-        <CardContent>
-          {topicDps.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nenhum data point neste tópico.
+            <CardTitle className="text-base">Importar Data Points</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Suba um <code>.json</code> ou <code>.csv</code> com campos para adicionar em lote.
+              Colunas esperadas: <code>topic_slug</code>, <code>field_name</code>,{" "}
+              <code>field_label</code>, <code>field_type</code>, <code>description</code>{" "}
+              (opcional).
             </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b text-left text-xs text-muted-foreground">
-                  <th className="py-2 pr-3">Label</th>
-                  <th className="py-2 pr-3">Field</th>
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">Strategy</th>
-                  <th className="py-2 pr-3">Required</th>
-                  <th className="py-2 pr-3">Active</th>
-                  <th className="py-2 pr-3">Cands</th>
-                  <th className="py-2 pr-3">Consol.</th>
-                  <th className="py-2 pr-3">Avg Conf</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {topicDps.map((d) => {
-                  const s = stats?.[`${d.topic_definition_id}::${d.field_name}`];
-                  return (
-                  <tr key={d.id} className="border-b last:border-0">
-                    <td className="py-2 pr-3">{d.field_label}</td>
-                    <td className="py-2 pr-3 font-mono text-xs">
-                      {d.field_name}
+          </div>
+          <div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".json,.csv,application/json,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFile(f);
+              }}
+            />
+            <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
+              <Upload className="size-4" /> Escolher arquivo
+            </Button>
+          </div>
+        </CardHeader>
+      </Card>
 
-                    </td>
-                    <td className="py-2 pr-3">
-                      <Badge variant="secondary" className="text-[10px]">
-                        {d.field_type}
-                      </Badge>
-                    </td>
-                    <td className="py-2 pr-3">
+      {preview && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">
+                Pré-visualização · {preview.length} campo(s)
+              </CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Confira os campos encontrados no arquivo e importe. Campos com tópico inexistente
+                serão ignorados.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setPreview(null);
+                  setPreviewTopicSlug(null);
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button size="sm" onClick={importPreview} disabled={importing}>
+                {importing ? "Importando…" : `Importar ${preview.length}`}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+              <div className="space-y-1">
+                {previewTopics.map((t) => {
+                  const active = t.slug === previewTopicSlug;
+                  const known = topics?.some((x) => x.slug === t.slug);
+                  return (
+                    <button
+                      key={t.slug}
+                      onClick={() => setPreviewTopicSlug(t.slug)}
+                      className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                        active ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span>{TOPIC_EMOJI[t.slug] ?? "📁"}</span>
+                        <span>{t.name}</span>
+                        {!known && (
+                          <Badge variant="destructive" className="text-[9px]">
+                            novo
+                          </Badge>
+                        )}
+                      </span>
                       <Badge variant="outline" className="text-[10px]">
-                        {d.extraction_strategy}
+                        {t.count}
                       </Badge>
-                    </td>
-                    <td className="py-2 pr-3">
-                      {d.required ? (
-                        <Badge>req</Badge>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <Switch
-                        checked={d.active}
-                        onCheckedChange={async (v) => {
-                          const { error } = await supabase
-                            .from("data_point_definitions")
-                            .update({ active: v })
-                            .eq("id", d.id);
-                          if (error) toast.error(error.message);
-                          else refresh();
-                        }}
-                      />
-                    </td>
-                    <td className="py-2 pr-3 tabular-nums text-xs">{s?.candidates ?? 0}</td>
-                    <td className="py-2 pr-3 tabular-nums text-xs">{s?.consolidated ?? 0}</td>
-                    <td className="py-2 pr-3 tabular-nums text-xs">
-                      {s?.avg_confidence != null ? s.avg_confidence.toFixed(2) : "—"}
-                    </td>
-                    <td className="py-2 pr-3 text-right">
-                      <div className="flex justify-end gap-1">
-                        <EditDialog
-                          topicId={currentTopicId!}
-                          existing={d}
-                          onSaved={refresh}
-                          trigger={
-                            <Button size="icon" variant="ghost">
-                              <Pencil className="size-4" />
-                            </Button>
-                          }
-                        />
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={async () => {
-                            if (!confirm(`Excluir "${d.field_name}"?`)) return;
+                    </button>
+                  );
+                })}
+              </div>
+              <div>
+                {previewRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Selecione um tópico.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="py-2 pr-3">Label</th>
+                        <th className="py-2 pr-3">Field</th>
+                        <th className="py-2 pr-3">Type</th>
+                        <th className="py-2 pr-3">Descrição</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewRows.map((r, i) => (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="py-2 pr-3">{r.field_label}</td>
+                          <td className="py-2 pr-3 font-mono text-xs">{r.field_name}</td>
+                          <td className="py-2 pr-3">
+                            <Badge variant="secondary" className="text-[10px]">
+                              {r.field_type}
+                            </Badge>
+                          </td>
+                          <td className="py-2 pr-3 text-xs text-muted-foreground">
+                            {r.description ?? "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Tópicos</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1">
+            {(topics ?? []).map((t) => {
+              const count = (dps ?? []).filter(
+                (d) => d.topic_definition_id === t.id,
+              ).length;
+              const active = t.id === currentTopicId;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setSelectedTopicId(t.id)}
+                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                    active ? "bg-accent text-accent-foreground" : "hover:bg-muted"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span>{TOPIC_EMOJI[t.slug] ?? "📁"}</span>
+                    <span>{t.name}</span>
+                  </span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {count}
+                  </Badge>
+                </button>
+              );
+            })}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">
+                {currentTopic ? `Data Points · ${currentTopic.name}` : "Data Points"}
+              </CardTitle>
+              {currentTopic && (
+                <p className="mt-1 font-mono text-xs text-muted-foreground">
+                  {currentTopic.slug}
+                </p>
+              )}
+            </div>
+            {currentTopicId && (
+              <EditDialog
+                topicId={currentTopicId}
+                onSaved={refresh}
+                trigger={
+                  <Button size="sm">
+                    <Plus className="size-4" /> Novo
+                  </Button>
+                }
+              />
+            )}
+          </CardHeader>
+          <CardContent>
+            {topicDps.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nenhum data point neste tópico.
+              </p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-3">Label</th>
+                    <th className="py-2 pr-3">Field</th>
+                    <th className="py-2 pr-3">Type</th>
+                    <th className="py-2 pr-3">Active</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topicDps.map((d) => (
+                    <tr key={d.id} className="border-b last:border-0">
+                      <td className="py-2 pr-3">{d.field_label}</td>
+                      <td className="py-2 pr-3 font-mono text-xs">{d.field_name}</td>
+                      <td className="py-2 pr-3">
+                        <Badge variant="secondary" className="text-[10px]">
+                          {d.field_type}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Switch
+                          checked={d.active}
+                          onCheckedChange={async (v) => {
                             const { error } = await supabase
                               .from("data_point_definitions")
-                              .delete()
+                              .update({ active: v })
                               .eq("id", d.id);
                             if (error) toast.error(error.message);
                             else refresh();
                           }}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
+                        />
+                      </td>
+                      <td className="py-2 pr-3 text-right">
+                        <div className="flex justify-end gap-1">
+                          <EditDialog
+                            topicId={currentTopicId!}
+                            existing={d}
+                            onSaved={refresh}
+                            trigger={
+                              <Button size="icon" variant="ghost">
+                                <Pencil className="size-4" />
+                              </Button>
+                            }
+                          />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={async () => {
+                              if (!confirm(`Excluir "${d.field_name}"?`)) return;
+                              const { error } = await supabase
+                                .from("data_point_definitions")
+                                .delete()
+                                .eq("id", d.id);
+                              if (error) toast.error(error.message);
+                              else refresh();
+                            }}
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
+}
+
+// -------- parsing helpers --------
+
+function coerceFieldType(v: string | undefined): FieldType {
+  const s = (v ?? "text").trim().toLowerCase();
+  return (FIELD_TYPES as readonly string[]).includes(s) ? (s as FieldType) : "text";
+}
+
+function slugify(v: string): string {
+  return v
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeRow(raw: Record<string, unknown>): PreviewRow | null {
+  const get = (k: string) => {
+    for (const key of Object.keys(raw)) {
+      if (key.toLowerCase().trim() === k) return raw[key];
+    }
+    return undefined;
+  };
+  const topic_slug =
+    (get("topic_slug") as string) ??
+    (get("topic") as string) ??
+    (get("topico") as string) ??
+    (get("tópico") as string);
+  const topic_name = (get("topic_name") as string) ?? (topic_slug as string);
+  const field_name = (get("field_name") as string) ?? (get("field") as string) ?? (get("name") as string);
+  const field_label =
+    (get("field_label") as string) ??
+    (get("label") as string) ??
+    (field_name as string);
+  const field_type = coerceFieldType(get("field_type") as string ?? get("type") as string);
+  const description = ((get("description") as string) ?? (get("desc") as string) ?? null) || null;
+  if (!topic_slug || !field_name || !field_label) return null;
+  return {
+    topic_slug: slugify(String(topic_slug)),
+    topic_name: topic_name ? String(topic_name) : undefined,
+    field_name: slugify(String(field_name)),
+    field_label: String(field_label),
+    field_type,
+    description: description ? String(description) : null,
+  };
+}
+
+function parseJsonInput(text: string): PreviewRow[] {
+  const data = JSON.parse(text);
+  const rows: PreviewRow[] = [];
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (item && typeof item === "object") {
+        const r = normalizeRow(item as Record<string, unknown>);
+        if (r) rows.push(r);
+      }
+    }
+  } else if (data && typeof data === "object") {
+    // Alternative shape: { topic_slug: [ {field_name,...}, ... ], ... }
+    for (const [topic_slug, arr] of Object.entries(data)) {
+      if (!Array.isArray(arr)) continue;
+      for (const item of arr) {
+        if (item && typeof item === "object") {
+          const r = normalizeRow({ topic_slug, ...(item as Record<string, unknown>) });
+          if (r) rows.push(r);
+        }
+      }
+    }
+  }
+  return rows;
+}
+
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cur += c;
+    } else {
+      if (c === '"') quoted = true;
+      else if (c === ",") { out.push(cur); cur = ""; }
+      else cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+
+function parseCsvInput(text: string): PreviewRow[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase());
+  const rows: PreviewRow[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]);
+    const obj: Record<string, unknown> = {};
+    headers.forEach((h, idx) => (obj[h] = cells[idx]));
+    const r = normalizeRow(obj);
+    if (r) rows.push(r);
+  }
+  return rows;
 }
 
 function EditDialog({
@@ -298,16 +600,7 @@ function EditDialog({
     existing?.field_type ?? "text",
   );
   const [description, setDescription] = useState(existing?.description ?? "");
-  const [required, setRequired] = useState(existing?.required ?? false);
   const [active, setActive] = useState(existing?.active ?? true);
-  const [strategy, setStrategy] = useState<Strategy>(existing?.extraction_strategy ?? "llm");
-  const [regexPattern, setRegexPattern] = useState(existing?.regex_pattern ?? "");
-  const [keywordsJson, setKeywordsJson] = useState(
-    existing?.keywords ? JSON.stringify(existing.keywords, null, 2) : "{}",
-  );
-  const [negativeJson, setNegativeJson] = useState(
-    existing?.negative_keywords ? JSON.stringify(existing.negative_keywords, null, 2) : "[]",
-  );
   const [saving, setSaving] = useState(false);
 
   async function save() {
@@ -315,12 +608,6 @@ function EditDialog({
       toast.error("Preencha field name e label");
       return;
     }
-    let keywordsParsed: unknown = {};
-    let negativeParsed: unknown = [];
-    try { keywordsParsed = JSON.parse(keywordsJson || "{}"); }
-    catch { toast.error("Keywords não é JSON válido"); return; }
-    try { negativeParsed = JSON.parse(negativeJson || "[]"); }
-    catch { toast.error("Negative keywords não é JSON válido"); return; }
     setSaving(true);
     const payload = {
       topic_definition_id: topicId,
@@ -328,12 +615,12 @@ function EditDialog({
       field_label: fieldLabel.trim(),
       field_type: fieldType,
       description: description.trim() || null,
-      required,
+      required: existing?.required ?? false,
       active,
-      extraction_strategy: strategy,
-      regex_pattern: regexPattern.trim() || null,
-      keywords: keywordsParsed,
-      negative_keywords: negativeParsed,
+      extraction_strategy: existing?.extraction_strategy ?? DEFAULT_STRATEGY,
+      regex_pattern: existing?.regex_pattern ?? null,
+      keywords: existing?.keywords ?? {},
+      negative_keywords: existing?.negative_keywords ?? [],
     };
     const { error } = existing
       ? await supabase
@@ -393,59 +680,6 @@ function EditDialog({
             </select>
           </div>
           <div>
-            <Label>Estratégia de extração</Label>
-            <select
-              className="w-full rounded border bg-background p-2 text-sm"
-              value={strategy}
-              onChange={(e) => setStrategy(e.target.value as Strategy)}
-            >
-              {STRATEGIES.map((s) => (
-                <option key={s} value={s}>{s}</option>
-              ))}
-            </select>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              regex / keyword: nunca chama LLM se resolver. hybrid: tenta determinístico e cai p/ LLM. llm: sempre LLM.
-            </p>
-          </div>
-          {(strategy === "regex" || strategy === "hybrid") && (
-            <div>
-              <Label>Regex pattern (opcional)</Label>
-              <Input
-                placeholder="ex.: \\b(\\d{1,2})[:h](\\d{2})?\\b"
-                value={regexPattern}
-                onChange={(e) => setRegexPattern(e.target.value)}
-                className="font-mono text-xs"
-              />
-            </div>
-          )}
-          {(strategy === "keyword" || strategy === "hybrid") && (
-            <>
-              <div>
-                <Label>Keywords (JSON)</Label>
-                <Textarea
-                  rows={4}
-                  className="font-mono text-xs"
-                  value={keywordsJson}
-                  onChange={(e) => setKeywordsJson(e.target.value)}
-                  placeholder='{"allowed":["aceita pets","pet friendly"],"not_allowed":["não aceita pets"]}'
-                />
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Boolean: {"{ positive: [...], negative: [...] }"}. Enum: {"{ value: [...] }"}.
-                </p>
-              </div>
-              <div>
-                <Label>Negative keywords (JSON array)</Label>
-                <Textarea
-                  rows={2}
-                  className="font-mono text-xs"
-                  value={negativeJson}
-                  onChange={(e) => setNegativeJson(e.target.value)}
-                  placeholder='["não","sem","proibido"]'
-                />
-              </div>
-            </>
-          )}
-          <div>
             <Label>Descrição</Label>
             <Textarea
               rows={3}
@@ -455,14 +689,14 @@ function EditDialog({
           </div>
           <div className="flex items-center gap-6">
             <label className="flex items-center gap-2 text-sm">
-              <Switch checked={required} onCheckedChange={setRequired} />
-              Required
-            </label>
-            <label className="flex items-center gap-2 text-sm">
               <Switch checked={active} onCheckedChange={setActive} />
               Active
             </label>
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            A extração usa <strong>keyword</strong> como estratégia padrão, com fallback para LLM
+            definido no prompt de extração (Settings → Extraction Pipeline).
+          </p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>
