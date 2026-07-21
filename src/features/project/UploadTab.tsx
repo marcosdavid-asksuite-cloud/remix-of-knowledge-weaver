@@ -74,7 +74,8 @@ export function UploadTab({ projectId }: { projectId: string }) {
       if (toInsert.length > 0) await supabase.from("topics").insert(toInsert as never);
 
       setProcessStep("Classificando tópicos e extraindo campos…");
-      const ext = (await runExtractionFn({ data: { projectId, mode: "persist" } })) as {
+      const modelOverride = getExtractionModelOverride(projectId);
+      const ext = (await runExtractionFn({ data: { projectId, mode: "persist", modelOverride } })) as {
         stats: { core_fields_found: number; dynamic_fields_found: number; additional_info_found: number };
       };
       setProcessStep("Consolidando base estruturada…");
