@@ -12,7 +12,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { runCompare } from "@/lib/llm-providers.functions";
-import { estimateCostUsd, formatUsd, lsKey as _lsKey } from "@/lib/llm-pricing";
+import { estimateCostUsd, formatUsd } from "@/lib/llm-pricing";
 import { Trophy, AlertCircle, Settings2 } from "lucide-react";
 
 type Provider = "lovable" | "openai" | "anthropic" | "google" | "openrouter" | "custom";
@@ -433,6 +433,3 @@ function decideWinner(r: CompareResult): { side: "raw" | "structured" | "tie"; l
   if (stPts > rawPts) return { side: "structured", label: "Structured Knowledge" };
   return { side: "tie", label: "Empate" };
 }
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const _unused = _lsKey;
