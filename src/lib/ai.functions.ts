@@ -805,7 +805,11 @@ export const persistRun = createServerFn({ method: "POST" })
 // any record marked as user-edited (source_chunk_ids = []).
 // =====================================================
 export const extractTopicAggregated = createServerFn({ method: "POST" })
-  .inputValidator((input: { projectId: string; topicSlug?: string }) => input)
+  .inputValidator((input: {
+    projectId: string;
+    topicSlug?: string;
+    modelOverride?: { model?: string; temperature?: number; maxTokens?: number };
+  }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
 
@@ -827,6 +831,11 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       .from("model_configurations").select("*").eq("active", true)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
+
+    const effModel = data.modelOverride?.model?.trim() || modelCfg.model_name;
+    const effTemp = data.modelOverride?.temperature ?? Number(modelCfg.temperature) || 0.2;
+    const effMaxTokens = data.modelOverride?.maxTokens ?? modelCfg.max_tokens;
+
 
     const { data: topicsRaw } = await sb
       .from("topics")
