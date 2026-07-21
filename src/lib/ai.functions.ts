@@ -833,7 +833,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
 
     const effModel = data.modelOverride?.model?.trim() || modelCfg.model_name;
-    const effTemp = data.modelOverride?.temperature ?? Number(modelCfg.temperature) || 0.2;
+    const effTemp = data.modelOverride?.temperature ?? (Number(modelCfg.temperature) || 0.2);
     const effMaxTokens = data.modelOverride?.maxTokens ?? modelCfg.max_tokens;
 
 
