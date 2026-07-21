@@ -136,7 +136,7 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
   async function reextractAll() {
     setReextractingAll(true);
     try {
-      const res = await extractTopicAggregated({ data: { projectId } });
+      const res = await extractTopicAggregated({ data: { projectId, modelOverride: getExtractionModelOverride(projectId) } });
       const filled = res.topics.reduce((acc, t) => acc + t.core_filled, 0);
       const total = res.topics.reduce((acc, t) => acc + t.core_total, 0);
       toast.success(`Re-extração concluída · ${filled}/${total} campos preenchidos`);
