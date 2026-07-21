@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { extractTopicAggregated } from "@/lib/ai.functions";
 import { getExtractionModelOverride } from "@/features/settings/LLMConfigTab";
+import { estimateCostUsd, formatUsd } from "@/lib/llm-pricing";
 
 
 const TOPIC_EMOJI: Record<string, string> = {
@@ -24,8 +25,9 @@ const TOPIC_EMOJI: Record<string, string> = {
 type Topic = {
   id: string;
   topic_definition_id: string;
-  topic_definitions: { slug: string; name: string } | null;
+  topic_definitions: { slug: string; name: string; aliases: string[] | null } | null;
 };
+
 
 type Dpd = {
   id: string;
@@ -68,12 +70,13 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("topics")
-        .select("id, topic_definition_id, topic_definitions(slug, name)")
+        .select("id, topic_definition_id, topic_definitions(slug, name, aliases)")
         .eq("project_id", projectId);
       if (error) throw error;
       return (data ?? []) as unknown as Topic[];
     },
   });
+
 
   const { data: dpds } = useQuery({
     queryKey: ["sk_dpds"],
