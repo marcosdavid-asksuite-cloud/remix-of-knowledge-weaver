@@ -336,14 +336,18 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
 
 
 function TopicEditor({
-  projectId, topic, dpds, fields, addls,
+  projectId, topic, dpds, fields, addls, extractionCost, extractionChunks, costModel,
 }: {
   projectId: string;
   topic: Topic;
   dpds: Dpd[];
   fields: Field[];
   addls: Addl[];
+  extractionCost: number | null;
+  extractionChunks: number;
+  costModel: string;
 }) {
+
   const qc = useQueryClient();
   const slug = topic.topic_definitions?.slug ?? "?";
   const name = topic.topic_definitions?.name ?? slug;
