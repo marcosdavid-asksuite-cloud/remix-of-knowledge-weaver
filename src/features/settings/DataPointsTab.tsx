@@ -502,148 +502,50 @@ function normalizeRow(raw: Record<string, unknown>): PreviewRow | null {
     (get("topic_slug") as string) ??
     (get("topic") as string) ??
     (get("topico") as string) ??
-    (get("tópico") as string) ??
-    (get("topic_id") as string);
-  const topic_name =
-    (get("topic_name") as string) ??
-    (get("topic_label") as string) ??
-    (topic_slug as string);
-  const field_name =
-    (get("field_name") as string) ??
-    (get("field") as string) ??
-    (get("name") as string) ??
-    (get("key") as string) ??
-    (get("slug") as string);
+    (get("tópico") as string);
+  const topic_name = (get("topic_name") as string) ?? (topic_slug as string);
+  const field_name = (get("field_name") as string) ?? (get("field") as string) ?? (get("name") as string);
   const field_label =
     (get("field_label") as string) ??
     (get("label") as string) ??
-    (get("title") as string) ??
     (field_name as string);
-  const field_type = coerceFieldType(
-    (get("field_type") as string) ?? (get("type") as string) ?? (get("kind") as string),
-  );
-  const description =
-    ((get("description") as string) ??
-      (get("desc") as string) ??
-      (get("help") as string) ??
-      null) || null;
-  if (!topic_slug || !field_name) return null;
+  const field_type = coerceFieldType(get("field_type") as string ?? get("type") as string);
+  const description = ((get("description") as string) ?? (get("desc") as string) ?? null) || null;
+  if (!topic_slug || !field_name || !field_label) return null;
   return {
     topic_slug: slugify(String(topic_slug)),
     topic_name: topic_name ? String(topic_name) : undefined,
     field_name: slugify(String(field_name)),
-    field_label: String(field_label ?? field_name),
+    field_label: String(field_label),
     field_type,
     description: description ? String(description) : null,
   };
 }
 
-function extractFieldsFromTopicNode(
-  topicSlug: string,
-  topicName: string | undefined,
-  node: Record<string, unknown>,
-): PreviewRow[] {
-  const fieldsRaw =
-    (node.fields as unknown) ??
-    (node.data_points as unknown) ??
-    (node.datapoints as unknown) ??
-    (node.items as unknown) ??
-    (node.core_fields as unknown);
-  const out: PreviewRow[] = [];
-  if (Array.isArray(fieldsRaw)) {
-    for (const item of fieldsRaw) {
-      if (item && typeof item === "object") {
-        const r = normalizeRow({
-          topic_slug: topicSlug,
-          topic_name: topicName,
-          ...(item as Record<string, unknown>),
-        });
-        if (r) out.push(r);
-      }
-    }
-  } else if (fieldsRaw && typeof fieldsRaw === "object") {
-    for (const [fname, fval] of Object.entries(fieldsRaw as Record<string, unknown>)) {
-      const base =
-        fval && typeof fval === "object" ? (fval as Record<string, unknown>) : { type: fval };
-      const r = normalizeRow({
-        topic_slug: topicSlug,
-        topic_name: topicName,
-        field_name: fname,
-        ...base,
-      });
-      if (r) out.push(r);
-    }
-  }
-  return out;
-}
-
 function parseJsonInput(text: string): PreviewRow[] {
   const data = JSON.parse(text);
   const rows: PreviewRow[] = [];
-
-  const pushFromArray = (arr: unknown[]) => {
-    for (const item of arr) {
-      if (!item || typeof item !== "object") continue;
-      const obj = item as Record<string, unknown>;
-      const maybeSlug = (obj.slug ?? obj.topic_slug ?? obj.topic) as string | undefined;
-      const hasFields =
-        Array.isArray(obj.fields) ||
-        Array.isArray(obj.data_points) ||
-        Array.isArray(obj.datapoints) ||
-        Array.isArray(obj.items) ||
-        Array.isArray(obj.core_fields) ||
-        (obj.fields && typeof obj.fields === "object");
-      if (maybeSlug && hasFields) {
-        rows.push(
-          ...extractFieldsFromTopicNode(
-            String(maybeSlug),
-            (obj.name as string) ?? (obj.topic_name as string),
-            obj,
-          ),
-        );
-        continue;
-      }
-      const r = normalizeRow(obj);
-      if (r) rows.push(r);
-    }
-  };
-
   if (Array.isArray(data)) {
-    pushFromArray(data);
+    for (const item of data) {
+      if (item && typeof item === "object") {
+        const r = normalizeRow(item as Record<string, unknown>);
+        if (r) rows.push(r);
+      }
+    }
   } else if (data && typeof data === "object") {
-    const root = data as Record<string, unknown>;
-    if (Array.isArray(root.topics)) {
-      pushFromArray(root.topics as unknown[]);
-    } else if (Array.isArray(root.data_points) || Array.isArray(root.fields)) {
-      pushFromArray((root.data_points ?? root.fields) as unknown[]);
-    } else {
-      for (const [key, val] of Object.entries(root)) {
-        if (Array.isArray(val)) {
-          for (const item of val) {
-            if (item && typeof item === "object") {
-              const r = normalizeRow({
-                topic_slug: key,
-                ...(item as Record<string, unknown>),
-              });
-              if (r) rows.push(r);
-            }
-          }
-        } else if (val && typeof val === "object") {
-          const node = val as Record<string, unknown>;
-          rows.push(
-            ...extractFieldsFromTopicNode(
-              key,
-              (node.name as string) ?? (node.topic_name as string),
-              node,
-            ),
-          );
+    // Alternative shape: { topic_slug: [ {field_name,...}, ... ], ... }
+    for (const [topic_slug, arr] of Object.entries(data)) {
+      if (!Array.isArray(arr)) continue;
+      for (const item of arr) {
+        if (item && typeof item === "object") {
+          const r = normalizeRow({ topic_slug, ...(item as Record<string, unknown>) });
+          if (r) rows.push(r);
         }
       }
     }
   }
   return rows;
 }
-
 
 function parseCsvLine(line: string): string[] {
   const out: string[] = [];
