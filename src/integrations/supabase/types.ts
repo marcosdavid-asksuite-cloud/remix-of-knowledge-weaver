@@ -299,6 +299,7 @@ export type Database = {
           singleton: boolean
           system_prompt: string
           temperature: number
+          unified_prompt: string | null
           updated_at: string
           use_llm_for_dynamic: boolean
         }
@@ -310,6 +311,7 @@ export type Database = {
           singleton?: boolean
           system_prompt: string
           temperature?: number
+          unified_prompt?: string | null
           updated_at?: string
           use_llm_for_dynamic?: boolean
         }
@@ -321,6 +323,7 @@ export type Database = {
           singleton?: boolean
           system_prompt?: string
           temperature?: number
+          unified_prompt?: string | null
           updated_at?: string
           use_llm_for_dynamic?: boolean
         }
