@@ -119,6 +119,72 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
     },
   });
 
+  const { data: rawChunks } = useQuery({
+    queryKey: ["sk_raw_chunks_cost", projectId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("raw_chunks")
+        .select("id, content, raw_sources!inner(project_id)")
+        .eq("raw_sources.project_id", projectId);
+      if (error) throw error;
+      return (data ?? []) as unknown as Array<{ id: string; content: string }>;
+    },
+  });
+
+  // Model used for extraction cost estimate (Lovable provider only; server defaults otherwise)
+  const modelOverride = useMemo(() => getExtractionModelOverride(projectId), [projectId]);
+  const costModel = modelOverride?.model ?? "google/gemini-3-flash-preview";
+
+  // Approximate input tokens per topic based on which chunks match its aliases.
+  // Overhead per LLM call for prompt template + data points spec.
+  const PROMPT_OVERHEAD_CHARS = 2500;
+  const OUTPUT_TOKENS_EST = 500;
+
+  const topicCosts = useMemo(() => {
+    const map = new Map<string, { cost: number | null; chunks: number }>();
+    if (!topics || !rawChunks) return map;
+    for (const t of topics) {
+      const td = t.topic_definitions;
+      const terms = [td?.slug, td?.name, ...(td?.aliases ?? [])]
+        .filter(Boolean)
+        .map((s) => String(s).toLowerCase());
+      let chars = 0;
+      let count = 0;
+      for (const c of rawChunks) {
+        const lc = c.content.toLowerCase();
+        if (terms.some((term) => term && lc.includes(term))) {
+          chars += c.content.length;
+          count += 1;
+        }
+      }
+      if (count === 0) {
+        map.set(t.id, { cost: 0, chunks: 0 });
+        continue;
+      }
+      const inputTokens = Math.ceil((chars + PROMPT_OVERHEAD_CHARS) / 4);
+      const cost = estimateCostUsd({
+        provider: "lovable",
+        model: costModel,
+        inputTokens,
+        outputTokens: OUTPUT_TOKENS_EST,
+      });
+      map.set(t.id, { cost, chunks: count });
+    }
+    return map;
+  }, [topics, rawChunks, costModel]);
+
+  const totalCost = useMemo(() => {
+    let sum = 0;
+    let hasAny = false;
+    for (const v of topicCosts.values()) {
+      if (v.cost != null) {
+        sum += v.cost;
+        hasAny = true;
+      }
+    }
+    return hasAny ? sum : null;
+  }, [topicCosts]);
+
   const topicsWithData = useMemo(() => {
     if (!topics) return [];
     const counts = new Map<string, number>();
@@ -128,6 +194,7 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
       .map((t) => ({ ...t, count: counts.get(t.id) ?? 0 }))
       .sort((a, b) => (b.count - a.count) || (a.topic_definitions?.name ?? "").localeCompare(b.topic_definitions?.name ?? ""));
   }, [topics, fields, addls]);
+
 
   const currentTopicId = selectedTopicId ?? topicsWithData[0]?.id ?? null;
   const currentTopic = topicsWithData.find((t) => t.id === currentTopicId);
