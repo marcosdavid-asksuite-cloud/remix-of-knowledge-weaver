@@ -262,13 +262,19 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
         <p className="text-xs text-muted-foreground">
           Cada tópico agrega todos os chunks relevantes antes de chamar a LLM — captura mais detalhes e fica mais barato.
         </p>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={exportAllJson}>
             Exportar JSON unificado
           </Button>
-          <Button size="sm" variant="outline" onClick={reextractAll} disabled={reextractingAll}>
-            {reextractingAll ? "Re-extraindo todos…" : "Re-extrair todos os tópicos"}
-          </Button>
+          <div className="flex flex-col items-end">
+            <Button size="sm" variant="outline" onClick={reextractAll} disabled={reextractingAll}>
+              {reextractingAll ? "Re-extraindo todos…" : "Re-extrair todos os tópicos"}
+            </Button>
+            <span className="mt-1 text-[10px] text-muted-foreground">
+              Custo estimado total: <strong>{formatUsd(totalCost)}</strong>
+              <span className="ml-1 opacity-70">· {costModel}</span>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -282,6 +288,7 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
             const slug = t.topic_definitions?.slug ?? "?";
             const name = t.topic_definitions?.name ?? slug;
             const active = t.id === currentTopicId;
+            const tc = topicCosts.get(t.id);
             return (
               <button
                 key={t.id}
@@ -294,9 +301,14 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
                   <span>{TOPIC_EMOJI[slug] ?? "📁"}</span>
                   <span>{name}</span>
                 </span>
-                <Badge variant={t.count > 0 ? "secondary" : "outline"} className="text-[10px]">
-                  {t.count}
-                </Badge>
+                <span className="flex items-center gap-1">
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {tc ? formatUsd(tc.cost) : "—"}
+                  </span>
+                  <Badge variant={t.count > 0 ? "secondary" : "outline"} className="text-[10px]">
+                    {t.count}
+                  </Badge>
+                </span>
               </button>
             );
           })}
@@ -311,12 +323,17 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
           dpds={(dpds ?? []).filter((d) => d.topic_definition_id === currentTopic.topic_definition_id)}
           fields={(fields ?? []).filter((f) => f.topic_id === currentTopic.id)}
           addls={(addls ?? []).filter((a) => a.topic_id === currentTopic.id)}
+          extractionCost={topicCosts.get(currentTopic.id)?.cost ?? null}
+          extractionChunks={topicCosts.get(currentTopic.id)?.chunks ?? 0}
+          costModel={costModel}
         />
       )}
       </div>
     </div>
   );
 }
+
+
 
 function TopicEditor({
   projectId, topic, dpds, fields, addls,
