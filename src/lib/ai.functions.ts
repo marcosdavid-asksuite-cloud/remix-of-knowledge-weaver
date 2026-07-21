@@ -560,7 +560,7 @@ export const runExtraction = createServerFn({ method: "POST" })
             ? "(todos os data points oficiais já foram preenchidos por regra determinística — extraia somente dynamic_fields e additional_information)"
             : unresolvedNeedsLLM.map((d) => `- ${d.field_name} (${d.field_type})${d.description ? `: ${d.description}` : ""}`).join("\n");
 
-          const userPrompt = renderPrompt(settings.extraction_prompt, {
+          const userPrompt = renderPrompt(unifiedPrompt, {
             topic_slug: topic.slug,
             topic_name: topic.name,
             topic_description: topic.description,
@@ -569,20 +569,19 @@ export const runExtraction = createServerFn({ method: "POST" })
           });
 
           const res = await callGateway({
-            model: modelCfg.model_name,
-            temperature: Number(settings.temperature),
-            maxTokens: modelCfg.max_tokens,
-            system: settings.system_prompt,
+            model: effModel,
+            temperature: effTemp,
+            maxTokens: effMaxTokens,
             user: userPrompt,
             jsonMode: true,
           });
-          const cost = estimateCost(modelCfg.model_name, res.inputTokens, res.outputTokens);
+          const cost = estimateCost(effModel, res.inputTokens, res.outputTokens);
           totalIn += res.inputTokens; totalOut += res.outputTokens;
           totalCost += cost; totalLatency += res.latency;
 
           await sb.from("llm_calls").insert({
             prompt_type: `extract:${topic.slug}`,
-            model_name: modelCfg.model_name,
+            model_name: effModel,
             input_tokens: res.inputTokens,
             output_tokens: res.outputTokens,
             latency: res.latency,
