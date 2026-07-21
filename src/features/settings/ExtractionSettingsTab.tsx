@@ -25,8 +25,7 @@ export function ExtractionSettingsTab() {
   const [chunkSize, setChunkSize] = useState("");
   const [maxChunks, setMaxChunks] = useState("");
   const [temperature, setTemperature] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [extractionPrompt, setExtractionPrompt] = useState("");
+  const [unifiedPrompt, setUnifiedPrompt] = useState("");
   const [useLlmForDynamic, setUseLlmForDynamic] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -35,9 +34,12 @@ export function ExtractionSettingsTab() {
     setChunkSize(String(data.chunk_size));
     setMaxChunks(String(data.max_chunks));
     setTemperature(String(data.temperature));
-    setSystemPrompt(data.system_prompt);
-    setExtractionPrompt(data.extraction_prompt);
-    const d = data as typeof data & { use_llm_for_dynamic?: boolean };
+    const d = data as typeof data & { unified_prompt?: string | null; use_llm_for_dynamic?: boolean };
+    setUnifiedPrompt(
+      d.unified_prompt && d.unified_prompt.trim().length > 0
+        ? d.unified_prompt
+        : `${data.system_prompt ?? ""}\n\n${data.extraction_prompt ?? ""}`.trim(),
+    );
     setUseLlmForDynamic(d.use_llm_for_dynamic ?? true);
   }, [data]);
 
@@ -48,8 +50,7 @@ export function ExtractionSettingsTab() {
       chunk_size: Number(chunkSize),
       max_chunks: Number(maxChunks),
       temperature: Number(temperature),
-      system_prompt: systemPrompt,
-      extraction_prompt: extractionPrompt,
+      unified_prompt: unifiedPrompt,
       use_llm_for_dynamic: useLlmForDynamic,
       updated_at: new Date().toISOString(),
     } as never).eq("id", data.id);
@@ -68,6 +69,19 @@ export function ExtractionSettingsTab() {
     <div className="space-y-4">
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Modelo LLM</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            O modelo, provider e temperatura usados na extração são os mesmos configurados em{" "}
+            <strong>Settings → LLM Config</strong>. Ajuste-os por lá — vale tanto para a extração
+            quanto para a aba <strong>Compare Responses</strong>.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Parâmetros</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-3 gap-3">
@@ -80,7 +94,7 @@ export function ExtractionSettingsTab() {
             <Input type="number" value={maxChunks} onChange={(e) => setMaxChunks(e.target.value)} />
           </div>
           <div>
-            <Label>Temperature</Label>
+            <Label>Temperature (fallback)</Label>
             <Input type="number" step="0.05" value={temperature} onChange={(e) => setTemperature(e.target.value)} />
           </div>
         </CardContent>
@@ -104,22 +118,14 @@ export function ExtractionSettingsTab() {
         </CardContent>
       </Card>
 
-
-
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">System prompt</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Textarea rows={6} value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Extraction prompt</CardTitle>
+          <CardTitle className="text-base">Prompt de extração (unificado)</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Variáveis disponíveis: <code className="font-mono">{`{{topic_slug}}`}</code>,{" "}
+            Prompt único enviado à LLM para extrair os data points. Inclua tanto as instruções gerais
+            (papel do agente, regras de plausibilidade, formato de saída) quanto o template por
+            tópico/chunk. Variáveis disponíveis:{" "}
+            <code className="font-mono">{`{{topic_slug}}`}</code>,{" "}
             <code className="font-mono">{`{{topic_name}}`}</code>,{" "}
             <code className="font-mono">{`{{topic_description}}`}</code>,{" "}
             <code className="font-mono">{`{{data_points}}`}</code>,{" "}
@@ -127,7 +133,12 @@ export function ExtractionSettingsTab() {
           </p>
         </CardHeader>
         <CardContent>
-          <Textarea rows={14} className="font-mono text-xs" value={extractionPrompt} onChange={(e) => setExtractionPrompt(e.target.value)} />
+          <Textarea
+            rows={22}
+            className="font-mono text-xs"
+            value={unifiedPrompt}
+            onChange={(e) => setUnifiedPrompt(e.target.value)}
+          />
         </CardContent>
       </Card>
 

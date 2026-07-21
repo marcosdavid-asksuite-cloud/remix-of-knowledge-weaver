@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { importPdf, importUrl, importFastContent } from "@/lib/importers.functions";
 import { runExtraction } from "@/lib/ai.functions";
+import { getExtractionModelOverride } from "@/features/settings/LLMConfigTab";
 import { consolidateKnowledge } from "@/lib/consolidation.functions";
 import { Sparkles, Trash2 } from "lucide-react";
 
@@ -73,7 +74,8 @@ export function UploadTab({ projectId }: { projectId: string }) {
       if (toInsert.length > 0) await supabase.from("topics").insert(toInsert as never);
 
       setProcessStep("Classificando tópicos e extraindo campos…");
-      const ext = (await runExtractionFn({ data: { projectId, mode: "persist" } })) as {
+      const modelOverride = getExtractionModelOverride(projectId);
+      const ext = (await runExtractionFn({ data: { projectId, mode: "persist", modelOverride } })) as {
         stats: { core_fields_found: number; dynamic_fields_found: number; additional_info_found: number };
       };
       setProcessStep("Consolidando base estruturada…");

@@ -19,6 +19,34 @@ export function lsKey(projectId: string) {
   return `hkb-compare-cfg:${projectId}`;
 }
 
+/**
+ * Returns a model override safe to pass to server-side extraction.
+ * Extraction runs through Lovable AI Gateway, so we only forward overrides
+ * when the user picked the Lovable provider — other providers use the
+ * project's active model_configuration on the server.
+ */
+export function getExtractionModelOverride(projectId: string):
+  | { model?: string; temperature?: number; maxTokens?: number }
+  | undefined {
+  try {
+    const raw = localStorage.getItem(lsKey(projectId));
+    if (!raw) return undefined;
+    const c = JSON.parse(raw) as {
+      provider?: Provider; model?: string; temperature?: string; maxTokens?: string;
+    };
+    if (c.provider && c.provider !== "lovable") return undefined;
+    const t = c.temperature ? Number(c.temperature) : undefined;
+    const m = c.maxTokens ? Number(c.maxTokens) : undefined;
+    return {
+      model: c.model?.trim() || undefined,
+      temperature: Number.isFinite(t) ? t : undefined,
+      maxTokens: Number.isFinite(m) ? m : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function LLMConfigTab({ projectId }: { projectId: string }) {
   const [provider, setProvider] = useState<Provider>("lovable");
   const [apiKey, setApiKey] = useState("");
@@ -63,7 +91,9 @@ export function LLMConfigTab({ projectId }: { projectId: string }) {
       <CardHeader>
         <CardTitle className="text-base">Configuração do modelo</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Usado pela aba <strong>Compare Responses</strong>. Suas credenciais ficam apenas no navegador (localStorage). Não armazenamos no servidor.
+          Usado pela aba <strong>Compare Responses</strong> e também pela{" "}
+          <strong>extração</strong> (quando o provider for <em>Lovable AI Gateway</em>).
+          Suas credenciais ficam apenas no navegador (localStorage). Não armazenamos no servidor.
         </p>
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-3 md:grid-cols-4">

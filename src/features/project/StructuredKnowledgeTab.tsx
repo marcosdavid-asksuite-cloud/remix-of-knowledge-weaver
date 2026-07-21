@@ -12,6 +12,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { extractTopicAggregated } from "@/lib/ai.functions";
+import { getExtractionModelOverride } from "@/features/settings/LLMConfigTab";
 
 
 const TOPIC_EMOJI: Record<string, string> = {
@@ -135,7 +136,7 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
   async function reextractAll() {
     setReextractingAll(true);
     try {
-      const res = await extractTopicAggregated({ data: { projectId } });
+      const res = await extractTopicAggregated({ data: { projectId, modelOverride: getExtractionModelOverride(projectId) } });
       const filled = res.topics.reduce((acc, t) => acc + t.core_filled, 0);
       const total = res.topics.reduce((acc, t) => acc + t.core_total, 0);
       toast.success(`Re-extração concluída · ${filled}/${total} campos preenchidos`);
@@ -274,7 +275,7 @@ function TopicEditor({
   async function reextract() {
     setReextracting(true);
     try {
-      const res = await extractTopicAggregated({ data: { projectId, topicSlug: slug } });
+      const res = await extractTopicAggregated({ data: { projectId, topicSlug: slug, modelOverride: getExtractionModelOverride(projectId) } });
       const r = res.topics[0];
       if (r) {
         toast.success(`Re-extraído: ${r.core_filled}/${r.core_total} campos · ${r.chunks_used} chunks · +${r.additional_info_chars} chars de narrativa`);

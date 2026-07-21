@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { runExtraction } from "@/lib/ai.functions";
+import { getExtractionModelOverride } from "@/features/settings/LLMConfigTab";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -89,7 +90,8 @@ export function ExtractionsTab({ projectId }: { projectId: string }) {
     if (mode === "persist" && !confirm("Persistir resultados na base. Continuar?")) return;
     setBusy(mode);
     try {
-      const res = await extractFn({ data: { projectId, mode } });
+      const modelOverride = getExtractionModelOverride(projectId);
+      const res = await extractFn({ data: { projectId, mode, modelOverride } });
       const preview = res.preview as unknown as Preview;
       setLastPreview(preview);
       setLastMode(mode);

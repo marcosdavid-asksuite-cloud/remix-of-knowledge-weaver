@@ -341,7 +341,12 @@ function fieldKeyVariants(s: string): string[] {
 // runExtraction (Etapa 2 — DataPoint-aware)
 // =====================================================
 export const runExtraction = createServerFn({ method: "POST" })
-  .inputValidator((input: { projectId: string; mode: "dry_run" | "persist"; chunkIds?: string[] }) => input)
+  .inputValidator((input: {
+    projectId: string;
+    mode: "dry_run" | "persist";
+    chunkIds?: string[];
+    modelOverride?: { model?: string; temperature?: number; maxTokens?: number };
+  }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
 
@@ -366,6 +371,12 @@ export const runExtraction = createServerFn({ method: "POST" })
       .from("model_configurations").select("*").eq("active", true)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
+
+    const effModel = data.modelOverride?.model?.trim() || modelCfg.model_name;
+    const effTemp = data.modelOverride?.temperature ?? Number(settings.temperature);
+    const effMaxTokens = data.modelOverride?.maxTokens ?? modelCfg.max_tokens;
+    const unifiedPrompt = (settings as { unified_prompt?: string | null }).unified_prompt?.trim()
+      || `${settings.system_prompt ?? ""}\n\n${settings.extraction_prompt ?? ""}`.trim();
 
     let chunkQuery = sb
       .from("raw_chunks").select("id, content").in("raw_source_id", sourceIds).order("position");
@@ -486,11 +497,11 @@ export const runExtraction = createServerFn({ method: "POST" })
         let via: "alias" | "llm" | "none" = "alias";
         if (matched.length === 0) {
           // Step 2: LLM classification
-          const c = await classifyChunkWithLLM(chunk.content, topics, modelCfg.model_name, Number(modelCfg.temperature));
+          const c = await classifyChunkWithLLM(chunk.content, topics, effModel, effTemp);
           totalIn += c.inT; totalOut += c.outT; totalCost += c.cost; totalLatency += c.latency;
           await sb.from("llm_calls").insert({
             prompt_type: "classify",
-            model_name: modelCfg.model_name,
+            model_name: effModel,
             input_tokens: c.inT, output_tokens: c.outT, latency: c.latency, estimated_cost: c.cost,
             extraction_run_id: run.id,
           });
@@ -549,7 +560,7 @@ export const runExtraction = createServerFn({ method: "POST" })
             ? "(todos os data points oficiais já foram preenchidos por regra determinística — extraia somente dynamic_fields e additional_information)"
             : unresolvedNeedsLLM.map((d) => `- ${d.field_name} (${d.field_type})${d.description ? `: ${d.description}` : ""}`).join("\n");
 
-          const userPrompt = renderPrompt(settings.extraction_prompt, {
+          const userPrompt = renderPrompt(unifiedPrompt, {
             topic_slug: topic.slug,
             topic_name: topic.name,
             topic_description: topic.description,
@@ -558,20 +569,19 @@ export const runExtraction = createServerFn({ method: "POST" })
           });
 
           const res = await callGateway({
-            model: modelCfg.model_name,
-            temperature: Number(settings.temperature),
-            maxTokens: modelCfg.max_tokens,
-            system: settings.system_prompt,
+            model: effModel,
+            temperature: effTemp,
+            maxTokens: effMaxTokens,
             user: userPrompt,
             jsonMode: true,
           });
-          const cost = estimateCost(modelCfg.model_name, res.inputTokens, res.outputTokens);
+          const cost = estimateCost(effModel, res.inputTokens, res.outputTokens);
           totalIn += res.inputTokens; totalOut += res.outputTokens;
           totalCost += cost; totalLatency += res.latency;
 
           await sb.from("llm_calls").insert({
             prompt_type: `extract:${topic.slug}`,
-            model_name: modelCfg.model_name,
+            model_name: effModel,
             input_tokens: res.inputTokens,
             output_tokens: res.outputTokens,
             latency: res.latency,
@@ -795,7 +805,11 @@ export const persistRun = createServerFn({ method: "POST" })
 // any record marked as user-edited (source_chunk_ids = []).
 // =====================================================
 export const extractTopicAggregated = createServerFn({ method: "POST" })
-  .inputValidator((input: { projectId: string; topicSlug?: string }) => input)
+  .inputValidator((input: {
+    projectId: string;
+    topicSlug?: string;
+    modelOverride?: { model?: string; temperature?: number; maxTokens?: number };
+  }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
 
@@ -817,6 +831,11 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       .from("model_configurations").select("*").eq("active", true)
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
+
+    const effModel = data.modelOverride?.model?.trim() || modelCfg.model_name;
+    const effTemp = data.modelOverride?.temperature ?? (Number(modelCfg.temperature) || 0.2);
+    const effMaxTokens = data.modelOverride?.maxTokens ?? modelCfg.max_tokens;
+
 
     const { data: topicsRaw } = await sb
       .from("topics")
@@ -956,9 +975,9 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
 
       try {
         const res = await callGateway({
-          model: modelCfg.model_name,
-          temperature: Number(modelCfg.temperature) || 0.2,
-          maxTokens: modelCfg.max_tokens,
+          model: effModel,
+          temperature: effTemp,
+          maxTokens: effMaxTokens,
           system: sys,
           user,
           jsonMode: true,
@@ -966,9 +985,9 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         inT = res.inputTokens; outT = res.outputTokens;
         await sb.from("llm_calls").insert({
           prompt_type: `extract_aggregated:${topic.slug}`,
-          model_name: modelCfg.model_name,
+          model_name: effModel,
           input_tokens: inT, output_tokens: outT, latency: res.latency,
-          estimated_cost: estimateCost(modelCfg.model_name, inT, outT),
+          estimated_cost: estimateCost(effModel, inT, outT),
         } as never);
 
         try {
