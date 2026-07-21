@@ -372,6 +372,12 @@ export const runExtraction = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
     if (!modelCfg) throw new Error("Nenhum modelo ativo configurado.");
 
+    const effModel = data.modelOverride?.model?.trim() || modelCfg.model_name;
+    const effTemp = data.modelOverride?.temperature ?? Number(settings.temperature);
+    const effMaxTokens = data.modelOverride?.maxTokens ?? modelCfg.max_tokens;
+    const unifiedPrompt = (settings as { unified_prompt?: string | null }).unified_prompt?.trim()
+      || `${settings.system_prompt ?? ""}\n\n${settings.extraction_prompt ?? ""}`.trim();
+
     let chunkQuery = sb
       .from("raw_chunks").select("id, content").in("raw_source_id", sourceIds).order("position");
     if (data.chunkIds && data.chunkIds.length > 0) {
