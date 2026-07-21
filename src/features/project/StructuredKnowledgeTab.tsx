@@ -148,16 +148,59 @@ export function StructuredKnowledgeTab({ projectId }: { projectId: string }) {
     }
   }
 
+  function exportAllJson() {
+    const byTopic = new Map<string, { slug: string; name: string; core_fields: Record<string, unknown>; additional_information: string; sources: string[] }>();
+    for (const t of topicsWithData) {
+      const slug = t.topic_definitions?.slug ?? "?";
+      const name = t.topic_definitions?.name ?? slug;
+      const topicDpds = (dpds ?? []).filter((d) => d.topic_definition_id === t.topic_definition_id);
+      const topicFields = (fields ?? []).filter((f) => f.topic_id === t.id);
+      const topicAddls = (addls ?? []).filter((a) => a.topic_id === t.id);
+      const core: Record<string, unknown> = {};
+      for (const d of topicDpds) {
+        const f = topicFields.find((x) => x.field_name === d.field_name && x.field_origin === "core");
+        if (f) core[d.field_name] = f.field_value;
+      }
+      const userEdit = topicAddls.find((a) => (a.source_chunk_ids ?? []).length === 0);
+      const additional_information = userEdit ? userEdit.content : topicAddls.map((a) => a.content).join("\n\n");
+      const sources = new Set<string>();
+      for (const f of topicFields) (f.source_chunk_ids ?? []).forEach((id) => sources.add(id));
+      for (const a of topicAddls) (a.source_chunk_ids ?? []).forEach((id) => sources.add(id));
+      byTopic.set(t.id, { slug, name, core_fields: core, additional_information, sources: Array.from(sources) });
+    }
+    const payload = {
+      project_id: projectId,
+      exported_at: new Date().toISOString(),
+      topics: Array.from(byTopic.values()),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `knowledge-${projectId}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Exportado ${byTopic.size} tópicos`);
+  }
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-foreground">
           Cada tópico agrega todos os chunks relevantes antes de chamar a LLM — captura mais detalhes e fica mais barato.
         </p>
-        <Button size="sm" variant="outline" onClick={reextractAll} disabled={reextractingAll}>
-          {reextractingAll ? "Re-extraindo todos…" : "Re-extrair todos os tópicos"}
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={exportAllJson}>
+            Exportar JSON unificado
+          </Button>
+          <Button size="sm" variant="outline" onClick={reextractAll} disabled={reextractingAll}>
+            {reextractingAll ? "Re-extraindo todos…" : "Re-extrair todos os tópicos"}
+          </Button>
+        </div>
       </div>
+
       <div className="grid gap-4 md:grid-cols-[260px_1fr]">
       <Card>
         <CardHeader>
