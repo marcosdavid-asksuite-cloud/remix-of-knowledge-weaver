@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { importPdf, importUrl, importFastContent } from "@/lib/importers.functions";
 import { runExtraction } from "@/lib/ai.functions";
+import { getExtractionModelOverride } from "@/features/settings/LLMConfigTab";
 import { consolidateKnowledge } from "@/lib/consolidation.functions";
 import { Sparkles, Trash2 } from "lucide-react";
 
