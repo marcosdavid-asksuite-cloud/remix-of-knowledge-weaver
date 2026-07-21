@@ -341,7 +341,12 @@ function fieldKeyVariants(s: string): string[] {
 // runExtraction (Etapa 2 — DataPoint-aware)
 // =====================================================
 export const runExtraction = createServerFn({ method: "POST" })
-  .inputValidator((input: { projectId: string; mode: "dry_run" | "persist"; chunkIds?: string[] }) => input)
+  .inputValidator((input: {
+    projectId: string;
+    mode: "dry_run" | "persist";
+    chunkIds?: string[];
+    modelOverride?: { model?: string; temperature?: number; maxTokens?: number };
+  }) => input)
   .handler(async ({ data }) => {
     const sb = getSb();
 
