@@ -91,7 +91,9 @@ export function LLMConfigTab({ projectId }: { projectId: string }) {
       <CardHeader>
         <CardTitle className="text-base">Configuração do modelo</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Usado pela aba <strong>Compare Responses</strong>. Suas credenciais ficam apenas no navegador (localStorage). Não armazenamos no servidor.
+          Usado pela aba <strong>Compare Responses</strong> e também pela{" "}
+          <strong>extração</strong> (quando o provider for <em>Lovable AI Gateway</em>).
+          Suas credenciais ficam apenas no navegador (localStorage). Não armazenamos no servidor.
         </p>
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-3 md:grid-cols-4">
