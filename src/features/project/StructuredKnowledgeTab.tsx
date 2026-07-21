@@ -12,6 +12,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { extractTopicAggregated } from "@/lib/ai.functions";
+import { getExtractionModelOverride } from "@/features/settings/LLMConfigTab";
 
 
 const TOPIC_EMOJI: Record<string, string> = {
