@@ -975,9 +975,9 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
 
       try {
         const res = await callGateway({
-          model: modelCfg.model_name,
-          temperature: Number(modelCfg.temperature) || 0.2,
-          maxTokens: modelCfg.max_tokens,
+          model: effModel,
+          temperature: effTemp,
+          maxTokens: effMaxTokens,
           system: sys,
           user,
           jsonMode: true,
@@ -985,9 +985,9 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         inT = res.inputTokens; outT = res.outputTokens;
         await sb.from("llm_calls").insert({
           prompt_type: `extract_aggregated:${topic.slug}`,
-          model_name: modelCfg.model_name,
+          model_name: effModel,
           input_tokens: inT, output_tokens: outT, latency: res.latency,
-          estimated_cost: estimateCost(modelCfg.model_name, inT, outT),
+          estimated_cost: estimateCost(effModel, inT, outT),
         } as never);
 
         try {
