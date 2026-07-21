@@ -275,7 +275,7 @@ function TopicEditor({
   async function reextract() {
     setReextracting(true);
     try {
-      const res = await extractTopicAggregated({ data: { projectId, topicSlug: slug } });
+      const res = await extractTopicAggregated({ data: { projectId, topicSlug: slug, modelOverride: getExtractionModelOverride(projectId) } });
       const r = res.topics[0];
       if (r) {
         toast.success(`Re-extraído: ${r.core_filled}/${r.core_total} campos · ${r.chunks_used} chunks · +${r.additional_info_chars} chars de narrativa`);
