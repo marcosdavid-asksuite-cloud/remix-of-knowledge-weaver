@@ -63,7 +63,7 @@ function ProjectDetail() {
         <TabsContent value="raw" className="mt-6"><RawKnowledgeTab projectId={projectId} /></TabsContent>
         <TabsContent value="structured" className="mt-6"><StructuredKnowledgeTab projectId={projectId} /></TabsContent>
         <TabsContent value="compare" className="mt-6"><CompareResponsesTab projectId={projectId} /></TabsContent>
-        <TabsContent value="settings" className="mt-6"><SettingsTab /></TabsContent>
+        <TabsContent value="settings" className="mt-6"><SettingsTab projectId={projectId} /></TabsContent>
       </Tabs>
     </AppShell>
   );
