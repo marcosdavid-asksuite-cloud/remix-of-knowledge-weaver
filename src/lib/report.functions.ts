@@ -13,8 +13,8 @@ function getSb() {
 export const generateExecutiveSummary = createServerFn({ method: "POST" })
   .inputValidator((input: { projectId: string; metrics: Record<string, unknown> }) => input)
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("LOVABLE_API_KEY não configurada");
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("OPENROUTER_API_KEY não configurada");
 
     const sb = getSb();
     const { data: modelCfg } = await sb
@@ -24,7 +24,7 @@ export const generateExecutiveSummary = createServerFn({ method: "POST" })
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    const model = modelCfg?.model_name ?? "google/gemini-3-flash-preview";
+    const model = modelCfg?.model_name ?? "deepseek/deepseek-v4-flash";
 
     const system = `Você é um analista sênior gerando relatórios executivos sobre experimentos de IA.
 Escreva em português, formal, direto, no máximo 500 palavras.
@@ -34,9 +34,9 @@ Estruture em seções markdown: Estado atual, Pontos fortes, Problemas, Recomend
     const user = `Indicadores do experimento:\n\n${JSON.stringify(data.metrics, null, 2)}`;
 
     const t0 = Date.now();
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
-      headers: { "content-type": "application/json", "Lovable-API-Key": apiKey },
+      headers: { "content-type": "application/json", "Authorization": `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
         temperature: 0.3,

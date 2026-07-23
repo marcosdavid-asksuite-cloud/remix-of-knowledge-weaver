@@ -11,6 +11,7 @@ const PRICING: Record<string, { in: number; out: number }> = {
   "google/gemini-2.5-pro": { in: 1.25, out: 5 },
   "openai/gpt-5-mini": { in: 0.25, out: 2 },
   "openai/gpt-5-nano": { in: 0.05, out: 0.4 },
+  "deepseek/deepseek-v4-flash": { in: 0.098, out: 0.196 },
 };
 
 function estimateCost(model: string, inT: number, outT: number) {
@@ -33,12 +34,12 @@ async function callGateway(opts: {
   system: string;
   user: string;
 }): Promise<{ content: string; inputTokens: number; outputTokens: number; latency: number }> {
-  const apiKey = process.env.LOVABLE_API_KEY;
-  if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
   const t0 = Date.now();
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: { "content-type": "application/json", "Lovable-API-Key": apiKey },
+    headers: { "content-type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
       model: opts.model,
       messages: [
@@ -53,7 +54,7 @@ async function callGateway(opts: {
   if (!res.ok) {
     const text = await res.text();
     if (res.status === 429) throw new Error("Rate limit excedido. Tente novamente em instantes.");
-    if (res.status === 402) throw new Error("Créditos de IA esgotados.");
+    if (res.status === 402) throw new Error("Créditos insuficientes na conta OpenRouter.");
     throw new Error(`Gateway ${res.status}: ${text.slice(0, 300)}`);
   }
   const json = (await res.json()) as {

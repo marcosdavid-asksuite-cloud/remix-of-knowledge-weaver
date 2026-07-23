@@ -14,6 +14,7 @@ const PRICING: Record<string, { in: number; out: number }> = {
   "google/gemini-2.5-pro": { in: 1.25, out: 5 },
   "openai/gpt-5-mini": { in: 0.25, out: 2 },
   "openai/gpt-5-nano": { in: 0.05, out: 0.4 },
+  "deepseek/deepseek-v4-flash": { in: 0.098, out: 0.196 },
 };
 
 function estimateCost(model: string, inT: number, outT: number) {
@@ -44,8 +45,8 @@ async function callGateway(opts: {
   user: string;
   jsonMode?: boolean;
 }): Promise<GatewayResult> {
-  const apiKey = process.env.LOVABLE_API_KEY;
-  if (!apiKey) throw new Error("LOVABLE_API_KEY not configured");
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
 
   const messages: Array<{ role: string; content: string }> = [];
   if (opts.system) messages.push({ role: "system", content: opts.system });
@@ -60,9 +61,9 @@ async function callGateway(opts: {
   if (opts.jsonMode) body.response_format = { type: "json_object" };
 
   const t0 = Date.now();
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
-    headers: { "content-type": "application/json", "Lovable-API-Key": apiKey },
+    headers: { "content-type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify(body),
   });
   const latency = Date.now() - t0;
@@ -70,7 +71,7 @@ async function callGateway(opts: {
   if (!res.ok) {
     const text = await res.text();
     if (res.status === 429) throw new Error("Rate limit excedido. Tente novamente em instantes.");
-    if (res.status === 402) throw new Error("Créditos de IA esgotados. Adicione créditos na workspace.");
+    if (res.status === 402) throw new Error("Créditos insuficientes na conta OpenRouter.");
     throw new Error(`Gateway error ${res.status}: ${text.slice(0, 300)}`);
   }
   const json = (await res.json()) as {
@@ -151,6 +152,47 @@ async function classifyChunkWithLLM(
     latency: res.latency,
     cost: estimateCost(model, res.inputTokens, res.outputTokens),
   };
+}
+
+// Batch version: classifies many chunks against the full topic list in a single call.
+// Used to replace plain word-matching (aliasMatch) with real semantic classification —
+// aliasMatch produces heavy false positives for generic alias words (e.g. "spa" matching
+// every page because the hotel's own name contains it). Results are cached by the caller
+// (raw_chunks.metadata) so this only runs once per chunk, ever.
+async function classifyChunksBatchLLM(
+  items: Array<{ id: string; content: string }>,
+  topics: TopicLite[],
+  model: string,
+  temperature: number,
+): Promise<{ result: Map<string, string[]>; inT: number; outT: number }> {
+  const topicList = topics.map((t) => `- ${t.slug}: ${t.description || t.name}`).join("\n");
+  const numbered = items.map((c, i) => `[${i}] ${c.content.slice(0, 500)}`).join("\n---\n");
+  const sys = [
+    "Você classifica trechos de texto de um site de hotel em zero ou mais tópicos, com base no CONTEÚDO REAL do trecho.",
+    "IGNORE menus de navegação, links de rodapé, banners de cookies e menções incidentais (ex: o nome do hotel conter 'Spa' não significa que o trecho é sobre o tópico massagem).",
+    "Responda APENAS com JSON: {\"classifications\":[{\"i\":0,\"topics\":[\"slug1\"]},...]}. Use somente os slugs da lista de tópicos.",
+    "Inclua uma entrada para CADA índice recebido, mesmo que topics seja uma lista vazia.",
+  ].join("\n");
+  const user = `TÓPICOS DISPONÍVEIS:\n${topicList}\n\nTRECHOS (classifique cada um pelo índice):\n${numbered}`;
+  const res = await callGateway({ model, temperature, maxTokens: 2000, system: sys, user, jsonMode: true });
+  const result = new Map<string, string[]>();
+  const validSlugs = new Set(topics.map((t) => t.slug));
+  try {
+    const parsed = parseJsonLenient(res.content) as { classifications?: Array<{ i?: number; topics?: unknown }> };
+    for (const c of parsed.classifications ?? []) {
+      if (typeof c.i !== "number" || !items[c.i]) continue;
+      const slugs = Array.isArray(c.topics)
+        ? c.topics.filter((s): s is string => typeof s === "string" && validSlugs.has(s))
+        : [];
+      result.set(items[c.i].id, slugs);
+    }
+  } catch (e) {
+    console.error("classifyChunksBatchLLM parse failed", e);
+  }
+  // Anything the model didn't return an entry for is cached as "no topics" — otherwise
+  // a chunk with no match would be re-classified (and re-billed) on every future run.
+  for (const it of items) if (!result.has(it.id)) result.set(it.id, []);
+  return { result, inT: res.inputTokens, outT: res.outputTokens };
 }
 
 // ----- Per (chunk, topic) extraction schema -----
@@ -823,9 +865,50 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
     if (sourceIds.length === 0) throw new Error("Sem fontes. Faça upload primeiro.");
 
     const { data: chunksRaw } = await sb
-      .from("raw_chunks").select("id, content").in("raw_source_id", sourceIds).order("position");
-    const chunks = chunksRaw ?? [];
-    if (chunks.length === 0) throw new Error("Nenhum chunk encontrado.");
+      .from("raw_chunks").select("id, content, metadata").in("raw_source_id", sourceIds).order("position");
+    const allChunks = chunksRaw ?? [];
+    if (allChunks.length === 0) throw new Error("Nenhum chunk encontrado.");
+
+    // Dedup: scraped multi-page sources repeat verbatim boilerplate (cookie banners,
+    // footers) on every page. Dropping exact duplicates is free (no LLM) and shrinks
+    // both the deterministic pass and the number of LLM batches needed per topic below.
+    const normalizeForDedup = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    const seenContent = new Set<string>();
+    const dedupedChunks = allChunks.filter((c) => {
+      const key = normalizeForDedup(c.content);
+      if (seenContent.has(key)) return false;
+      seenContent.add(key);
+      return true;
+    });
+
+    // Strip site-wide boilerplate lines (nav menus, footers) that recur verbatim across
+    // many different pages. These cause false-positive alias matches — e.g. a "Spa & Leisure"
+    // nav link makes every page containing that menu "match" the massage topic even when
+    // unrelated — and waste tokens in the LLM prompt. Free (no LLM): a line counts as
+    // boilerplate if it appears, as-is, in enough distinct chunks to be part of the site
+    // template rather than real page content.
+    const MIN_LINE_LEN = 15;
+    const BOILERPLATE_MIN_CHUNKS = Math.max(5, Math.ceil(dedupedChunks.length * 0.03));
+    const lineChunkCount = new Map<string, number>();
+    for (const c of dedupedChunks) {
+      const uniqueLines = new Set(
+        c.content.split("\n").map((l) => l.trim()).filter((l) => l.length >= MIN_LINE_LEN),
+      );
+      for (const line of uniqueLines) {
+        lineChunkCount.set(line, (lineChunkCount.get(line) ?? 0) + 1);
+      }
+    }
+    const boilerplateLines = new Set(
+      Array.from(lineChunkCount.entries())
+        .filter(([, count]) => count >= BOILERPLATE_MIN_CHUNKS)
+        .map(([line]) => line),
+    );
+    const chunks = boilerplateLines.size === 0
+      ? dedupedChunks
+      : dedupedChunks.map((c) => ({
+          ...c,
+          content: c.content.split("\n").filter((l) => !boilerplateLines.has(l.trim())).join("\n"),
+        }));
 
     const { data: modelCfg } = await sb
       .from("model_configurations").select("*").eq("active", true)
@@ -842,7 +925,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
       .select("id, topic_definition_id, topic_definitions(slug, name, description, aliases)")
       .eq("project_id", data.projectId);
 
-    let topics: TopicLite[] = (topicsRaw ?? []).map((t) => {
+    const allTopics: TopicLite[] = (topicsRaw ?? []).map((t) => {
       const td = t.topic_definitions as {
         slug: string; name: string; description: string | null; aliases: string[];
       } | null;
@@ -855,6 +938,56 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         aliases: td?.aliases ?? [],
       };
     });
+    if (allTopics.length === 0) throw new Error("Nenhum tópico encontrado.");
+
+    // ---- Chunk → topic classification (LLM-based, cached in raw_chunks.metadata) ----
+    // Replaces aliasMatch (plain word-matching) as the chunk-topic filter below. Classified
+    // once against the FULL topic list (not just the topic(s) this run targets) so the
+    // cache is reusable no matter which topic is re-extracted next. A chunk is only ever
+    // classified once, ever — the result is persisted, so repeated "Re-extrair" runs incur
+    // no further classification cost, only the per-topic extraction calls.
+    const CLASSIFICATION_CACHE_KEY = "__topic_classification_v1";
+    const CLASSIFY_BATCH_SIZE = 15;
+    const chunkTopicMap = new Map<string, string[]>();
+    const toClassify: typeof chunks = [];
+    for (const c of chunks) {
+      const meta = (c as { metadata?: unknown }).metadata as { [k: string]: unknown } | null;
+      const cached = meta && typeof meta === "object" ? (meta[CLASSIFICATION_CACHE_KEY] as { slugs?: string[] } | undefined) : undefined;
+      if (cached && Array.isArray(cached.slugs)) {
+        chunkTopicMap.set(c.id, cached.slugs);
+      } else {
+        toClassify.push(c);
+      }
+    }
+    for (let i = 0; i < toClassify.length; i += CLASSIFY_BATCH_SIZE) {
+      const batch = toClassify.slice(i, i + CLASSIFY_BATCH_SIZE);
+      // A single transient failure (e.g. rate limit on a free-tier key) must not abort the
+      // whole run — leave this batch's chunks uncached and let a future run pick them up.
+      try {
+        const { result, inT, outT } = await classifyChunksBatchLLM(batch, allTopics, effModel, effTemp);
+        await sb.from("llm_calls").insert({
+          prompt_type: "classify_batch",
+          model_name: effModel,
+          input_tokens: inT, output_tokens: outT, latency: 0,
+          estimated_cost: estimateCost(effModel, inT, outT),
+        } as never);
+        for (const c of batch) {
+          const slugs = result.get(c.id) ?? [];
+          chunkTopicMap.set(c.id, slugs);
+          const meta = (c as { metadata?: unknown }).metadata;
+          const baseMeta = meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
+          await sb.from("raw_chunks").update({
+            metadata: { ...baseMeta, [CLASSIFICATION_CACHE_KEY]: { slugs, at: new Date().toISOString() } },
+          } as never).eq("id", c.id);
+        }
+      } catch (e) {
+        console.error("classifyChunksBatchLLM batch failed, skipping (will retry next run)", e);
+      }
+      // Small pacing delay between batches — free-tier keys are commonly rate-limited per minute.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    let topics: TopicLite[] = allTopics;
     if (data.topicSlug) topics = topics.filter((t) => t.slug === data.topicSlug);
     if (topics.length === 0) throw new Error("Nenhum tópico encontrado.");
 
@@ -884,6 +1017,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
 
     const CHUNK_CAP = 25;
     const CHUNK_CHAR_CAP = 1600;
+    const MAX_BATCHES = 4; // safety cap: up to CHUNK_CAP*MAX_BATCHES chunks sent to the LLM per topic
     const result: Array<{
       topic_slug: string;
       core_filled: number;
@@ -896,7 +1030,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
 
     for (const topic of topics) {
       const dps = dpdByDefId.get(topic.defId) ?? [];
-      const classified = chunks.filter((c) => aliasMatch(c.content, [topic]).length > 0);
+      const classified = chunks.filter((c) => (chunkTopicMap.get(c.id) ?? []).includes(topic.slug));
       if (classified.length === 0) {
         result.push({
           topic_slug: topic.slug, core_filled: 0, core_total: dps.length,
@@ -904,128 +1038,144 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         });
         continue;
       }
-      const useChunks = classified.slice(0, CHUNK_CAP);
-      const usedChunkIds = useChunks.map((c) => c.id);
 
-      // ---- Pair pass: handle *_start_time / *_end_time atomically ----
-      // (a single regex match would otherwise fill BOTH fields with the same first time)
       const coreValues = new Map<string, { value: unknown; chunkId: string }>();
-      const timeStarts = dps.filter((d) => d.field_type === "time" && /(_start_time|_start|_inicio|_inicio_time)$/.test(d.field_name));
-      for (const startDpd of timeStarts) {
-        const base = startDpd.field_name.replace(/(_start_time|_start|_inicio|_inicio_time)$/, "");
-        const endDpd = dps.find((d) => d.field_type === "time" && (d.field_name === `${base}_end_time` || d.field_name === `${base}_end` || d.field_name === `${base}_fim` || d.field_name === `${base}_fim_time`));
-        if (!endDpd) continue;
-        for (const c of useChunks) {
-          // Only search inside sentences that actually mention this topic — avoid grabbing checkout/checkin times for breakfast.
-          const snippet = topicRelevantSnippet(c.content, topic);
-          const range = extractTimeRange(snippet);
-          if (!range) continue;
-          if (!isSaneTimeRange(range, topic.slug, startDpd.field_name, endDpd.field_name)) continue;
-          if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
-          if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
-          break;
-        }
-      }
-
-      // Per-field deterministic pass — first-match wins, restricted to topic-relevant sentences.
-      for (const c of useChunks) {
-        const snippet = topicRelevantSnippet(c.content, topic);
-        for (const d of dps) {
-          if (coreValues.has(d.field_name)) continue;
-          const det = tryDeterministic(d, snippet);
-          if (!det) continue;
-          if (d.field_type === "time" && !isSaneTime(det.value, topic.slug, d.field_name)) continue;
-          coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
-        }
-      }
-
-      const unresolved = dps.filter((d) => !coreValues.has(d.field_name));
+      const usedChunkIds: string[] = [];
       let additionalInfoText = "";
       let inT = 0, outT = 0;
 
-      const combinedText = useChunks
-        .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${topicRelevantSnippet(c.content, topic).slice(0, CHUNK_CHAR_CAP)}`)
-        .join("\n---\n")
-        .slice(0, 14000);
-
-      const dpList = unresolved.length === 0
-        ? "(todos os campos oficiais já foram preenchidos pela camada determinística)"
-        : unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
-
-
       const dpTypeByName = new Map(dps.map((d) => [d.field_name, d.field_type]));
+      const timeStarts = dps.filter((d) => d.field_type === "time" && /(_start_time|_start|_inicio|_inicio_time)$/.test(d.field_name));
+      const allowedCore = new Set(dps.map((d) => d.field_name));
+      const coreAlias = new Map<string, string>();
+      for (const d of dps) {
+        for (const v of fieldKeyVariants(d.field_name)) coreAlias.set(v, d.field_name);
+        for (const v of fieldKeyVariants(d.field_label)) coreAlias.set(v, d.field_name);
+      }
+      const resolve = (name: string): string | null => {
+        if (allowedCore.has(name)) return name;
+        for (const v of fieldKeyVariants(name)) {
+          const hit = coreAlias.get(v);
+          if (hit) return hit;
+        }
+        return null;
+      };
 
-      const sys = [
-        "Você extrai informações estruturadas de textos de hotéis em pt-BR. Responda APENAS com JSON válido.",
-        "REGRAS:",
-        "1. Use SOMENTE informações presentes nos textos. Não invente. Se a informação não está nos textos, OMITA o campo.",
-        "2. Atribua cada horário ao tópico CORRETO. Nunca confunda café da manhã com check-in/check-out/jantar. Exemplos: '20:00 check-out' NÃO é horário de café da manhã; '15:00 check-in' NÃO é horário de almoço.",
-        "3. Plausibilidade por tópico (descarte o valor se estiver fora destas faixas):",
-        "   - café da manhã: 04:00–13:00",
-        "   - almoço: 10:00–16:00 · jantar: 17:00–23:00",
-        "   - check-in: 10:00–23:00 · check-out: 04:00–14:00",
-        "   - piscina: 06:00–22:00 · academia: 05:00–23:00 · spa: 08:00–22:00",
-        "4. Campos de horário (field_type=time) devem vir em HH:MM (24h). '07h' → '07:00', '10h30' → '10:30'.",
-        "5. Em intervalo ('07h às 10h', '6:30 até 10h', 'das 7 às 10'), preencha *_start_time e *_end_time com valores DIFERENTES e na ordem correta (start < end).",
-        "6. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
-        "7. Campos de texto curtos (location, name): só o trecho factual. Detalhes acessórios vão em additional_info.",
-        "8. Prefira preencher core_fields. additional_info é APENAS para o que NÃO couber em campo oficial.",
-      ].join("\n");
-      const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível, mas SEMPRE respeitando o tópico):\n${dpList}\n\nTEXTOS DISPONÍVEIS (já filtrados para este tópico, mas podem conter frases de contexto vizinho — IGNORE horários que pertençam a outros tópicos):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields. Pode ficar vazia."\n}`;
+      // Batch through every alias-matched chunk (not just the first CHUNK_CAP) so no
+      // relevant content is skipped, but keep each LLM call's context small (one batch
+      // of CHUNK_CAP chunks at a time) and stop as soon as every field is resolved —
+      // this is what bounds both token spend and per-call context size.
+      const totalBatches = Math.min(MAX_BATCHES, Math.ceil(classified.length / CHUNK_CAP));
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        const useChunks = classified.slice(batchIdx * CHUNK_CAP, (batchIdx + 1) * CHUNK_CAP);
+        if (useChunks.length === 0) break;
+        usedChunkIds.push(...useChunks.map((c) => c.id));
 
-      try {
-        const res = await callGateway({
-          model: effModel,
-          temperature: effTemp,
-          maxTokens: effMaxTokens,
-          system: sys,
-          user,
-          jsonMode: true,
-        });
-        inT = res.inputTokens; outT = res.outputTokens;
-        await sb.from("llm_calls").insert({
-          prompt_type: `extract_aggregated:${topic.slug}`,
-          model_name: effModel,
-          input_tokens: inT, output_tokens: outT, latency: res.latency,
-          estimated_cost: estimateCost(effModel, inT, outT),
-        } as never);
+        // ---- Pair pass: handle *_start_time / *_end_time atomically (deterministic, free) ----
+        // (a single regex match would otherwise fill BOTH fields with the same first time)
+        for (const startDpd of timeStarts) {
+          if (coreValues.has(startDpd.field_name)) continue;
+          const base = startDpd.field_name.replace(/(_start_time|_start|_inicio|_inicio_time)$/, "");
+          const endDpd = dps.find((d) => d.field_type === "time" && (d.field_name === `${base}_end_time` || d.field_name === `${base}_end` || d.field_name === `${base}_fim` || d.field_name === `${base}_fim_time`));
+          if (!endDpd) continue;
+          for (const c of useChunks) {
+            // Only search inside sentences that actually mention this topic — avoid grabbing checkout/checkin times for breakfast.
+            const snippet = topicRelevantSnippet(c.content, topic);
+            const range = extractTimeRange(snippet);
+            if (!range) continue;
+            if (!isSaneTimeRange(range, topic.slug, startDpd.field_name, endDpd.field_name)) continue;
+            if (!coreValues.has(startDpd.field_name)) coreValues.set(startDpd.field_name, { value: range.start, chunkId: c.id });
+            if (!coreValues.has(endDpd.field_name)) coreValues.set(endDpd.field_name, { value: range.end, chunkId: c.id });
+            break;
+          }
+        }
+
+        // Per-field deterministic pass — first-match wins, restricted to topic-relevant sentences.
+        for (const c of useChunks) {
+          const snippet = topicRelevantSnippet(c.content, topic);
+          for (const d of dps) {
+            if (coreValues.has(d.field_name)) continue;
+            const det = tryDeterministic(d, snippet);
+            if (!det) continue;
+            if (d.field_type === "time" && !isSaneTime(det.value, topic.slug, d.field_name)) continue;
+            coreValues.set(d.field_name, { value: det.value, chunkId: c.id });
+          }
+        }
+
+        const unresolved = dps.filter((d) => !coreValues.has(d.field_name));
+        if (unresolved.length === 0) break; // everything resolved deterministically — skip the LLM call entirely
+
+        const combinedText = useChunks
+          .map((c, i) => `[chunk ${i + 1} · ${c.id.slice(0, 6)}]\n${topicRelevantSnippet(c.content, topic).slice(0, CHUNK_CHAR_CAP)}`)
+          .join("\n---\n")
+          .slice(0, 14000);
+
+        const dpList = unresolved.map((d) => `- ${d.field_name} (${d.field_type})${d.field_label ? ` — ${d.field_label}` : ""}${d.description ? `: ${d.description}` : ""}`).join("\n");
+
+        const sys = [
+          "Você extrai informações estruturadas de textos de hotéis em pt-BR. Responda APENAS com JSON válido.",
+          "REGRAS:",
+          "1. Use SOMENTE informações presentes nos textos. Não invente. Se a informação não está nos textos, OMITA o campo.",
+          "2. Atribua cada horário ao tópico CORRETO. Nunca confunda café da manhã com check-in/check-out/jantar. Exemplos: '20:00 check-out' NÃO é horário de café da manhã; '15:00 check-in' NÃO é horário de almoço.",
+          "3. Plausibilidade por tópico (descarte o valor se estiver fora destas faixas):",
+          "   - café da manhã: 04:00–13:00",
+          "   - almoço: 10:00–16:00 · jantar: 17:00–23:00",
+          "   - check-in: 10:00–23:00 · check-out: 04:00–14:00",
+          "   - piscina: 06:00–22:00 · academia: 05:00–23:00 · spa: 08:00–22:00",
+          "4. Campos de horário (field_type=time) devem vir em HH:MM (24h). '07h' → '07:00', '10h30' → '10:30'.",
+          "5. Em intervalo ('07h às 10h', '6:30 até 10h', 'das 7 às 10'), preencha *_start_time e *_end_time com valores DIFERENTES e na ordem correta (start < end).",
+          "6. Campos boolean: true/false (sem string). Campos number/currency: número puro, sem moeda.",
+          "7. Campos de texto curtos (location, name): só o trecho factual. Detalhes acessórios vão em additional_info.",
+          "8. Prefira preencher core_fields. additional_info é APENAS para o que NÃO couber em campo oficial.",
+        ].join("\n");
+        const user = `TÓPICO: ${topic.name} (${topic.slug})\n${topic.description ? `DESCRIÇÃO: ${topic.description}\n` : ""}\nCAMPOS OFICIAIS A EXTRAIR (preencha o máximo possível, mas SEMPRE respeitando o tópico):\n${dpList}\n\nTEXTOS DISPONÍVEIS (já filtrados para este tópico, mas podem conter frases de contexto vizinho — IGNORE horários que pertençam a outros tópicos):\n${combinedText}\n\nResponda com JSON estritamente neste formato:\n{\n  "core_fields": { "field_name_oficial": valor_no_tipo_certo, ... },\n  "additional_info": "Narrativa em pt-BR com TUDO que for relevante e não couber em core_fields. Pode ficar vazia."\n}`;
 
         try {
-          const parsed = parseJsonLenient(res.content) as {
-            core_fields?: Record<string, unknown>;
-            additional_info?: string;
-          };
-          const allowedCore = new Set(dps.map((d) => d.field_name));
-          const coreAlias = new Map<string, string>();
-          for (const d of dps) {
-            for (const v of fieldKeyVariants(d.field_name)) coreAlias.set(v, d.field_name);
-            for (const v of fieldKeyVariants(d.field_label)) coreAlias.set(v, d.field_name);
-          }
-          const resolve = (name: string): string | null => {
-            if (allowedCore.has(name)) return name;
-            for (const v of fieldKeyVariants(name)) {
-              const hit = coreAlias.get(v);
-              if (hit) return hit;
+          const res = await callGateway({
+            model: effModel,
+            temperature: effTemp,
+            maxTokens: effMaxTokens,
+            system: sys,
+            user,
+            jsonMode: true,
+          });
+          inT += res.inputTokens; outT += res.outputTokens;
+          await sb.from("llm_calls").insert({
+            prompt_type: `extract_aggregated:${topic.slug}`,
+            model_name: effModel,
+            input_tokens: res.inputTokens, output_tokens: res.outputTokens, latency: res.latency,
+            estimated_cost: estimateCost(effModel, res.inputTokens, res.outputTokens),
+          } as never);
+
+          try {
+            const parsed = parseJsonLenient(res.content) as {
+              core_fields?: Record<string, unknown>;
+              additional_info?: string;
+            };
+            for (const [name, val] of Object.entries(parsed.core_fields ?? {})) {
+              if (isEmptyValue(val)) continue;
+              const canonical = resolve(name);
+              if (!canonical) continue;
+              if (coreValues.has(canonical)) continue;
+              // Sanity check: drop nonsensical time values (e.g. café da manhã 20:00).
+              if (dpTypeByName.get(canonical) === "time" && !isSaneTime(val, topic.slug, canonical)) continue;
+              coreValues.set(canonical, { value: val, chunkId: useChunks[0].id });
             }
-            return null;
-          };
-          for (const [name, val] of Object.entries(parsed.core_fields ?? {})) {
-            if (isEmptyValue(val)) continue;
-            const canonical = resolve(name);
-            if (!canonical) continue;
-            if (coreValues.has(canonical)) continue;
-            // Sanity check: drop nonsensical time values (e.g. café da manhã 20:00).
-            if (dpTypeByName.get(canonical) === "time" && !isSaneTime(val, topic.slug, canonical)) continue;
-            coreValues.set(canonical, { value: val, chunkId: usedChunkIds[0] });
-          }
-          if (typeof parsed.additional_info === "string") {
-            additionalInfoText = parsed.additional_info.trim();
+            if (typeof parsed.additional_info === "string" && parsed.additional_info.trim()) {
+              const chunk = parsed.additional_info.trim();
+              additionalInfoText = additionalInfoText ? `${additionalInfoText}\n${chunk}` : chunk;
+            }
+          } catch (e) {
+            console.error("Parse aggregated extraction failed", topic.slug, e);
           }
         } catch (e) {
-          console.error("Parse aggregated extraction failed", topic.slug, e);
+          console.error("Aggregated extraction LLM call failed", topic.slug, e);
         }
-      } catch (e) {
-        console.error("Aggregated extraction LLM call failed", topic.slug, e);
+
+        const stillUnresolved = dps.filter((d) => !coreValues.has(d.field_name));
+        if (stillUnresolved.length === 0) break; // every field filled — no need to scan further batches
+        // Small pacing delay — free-tier keys are commonly rate-limited per minute.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
       additionalInfoText = removeCoreFactsFromAdditionalInfo(additionalInfoText, topic.slug, coreValues);
@@ -1095,7 +1245,7 @@ export const extractTopicAggregated = createServerFn({ method: "POST" })
         core_filled: coreValues.size,
         core_total: dps.length,
         additional_info_chars: additionalInfoText.length,
-        chunks_used: useChunks.length,
+        chunks_used: usedChunkIds.length,
         input_tokens: inT,
         output_tokens: outT,
       });

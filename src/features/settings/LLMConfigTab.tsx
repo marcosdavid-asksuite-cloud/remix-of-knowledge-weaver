@@ -11,7 +11,7 @@ const PROVIDER_DEFAULTS: Record<Provider, { model: string; needsKey: boolean; ne
   openai: { model: "gpt-4o-mini", needsKey: true, needsEndpoint: false },
   anthropic: { model: "claude-3-5-sonnet-latest", needsKey: true, needsEndpoint: false },
   google: { model: "gemini-1.5-flash", needsKey: true, needsEndpoint: false },
-  openrouter: { model: "openai/gpt-4o-mini", needsKey: true, needsEndpoint: false },
+  openrouter: { model: "deepseek/deepseek-v4-flash", needsKey: true, needsEndpoint: false },
   custom: { model: "gpt-4o-mini", needsKey: false, needsEndpoint: true },
 };
 
@@ -21,9 +21,9 @@ export function lsKey(projectId: string) {
 
 /**
  * Returns a model override safe to pass to server-side extraction.
- * Extraction runs through Lovable AI Gateway, so we only forward overrides
- * when the user picked the Lovable provider — other providers use the
- * project's active model_configuration on the server.
+ * Extraction runs through OpenRouter, so we only forward overrides when the
+ * user picked the OpenRouter provider — other providers use the project's
+ * active model_configuration on the server.
  */
 export function getExtractionModelOverride(projectId: string):
   | { model?: string; temperature?: number; maxTokens?: number }
@@ -34,7 +34,7 @@ export function getExtractionModelOverride(projectId: string):
     const c = JSON.parse(raw) as {
       provider?: Provider; model?: string; temperature?: string; maxTokens?: string;
     };
-    if (c.provider && c.provider !== "lovable") return undefined;
+    if (c.provider && c.provider !== "openrouter") return undefined;
     const t = c.temperature ? Number(c.temperature) : undefined;
     const m = c.maxTokens ? Number(c.maxTokens) : undefined;
     return {
@@ -48,9 +48,9 @@ export function getExtractionModelOverride(projectId: string):
 }
 
 export function LLMConfigTab({ projectId }: { projectId: string }) {
-  const [provider, setProvider] = useState<Provider>("lovable");
+  const [provider, setProvider] = useState<Provider>("openrouter");
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState(PROVIDER_DEFAULTS.lovable.model);
+  const [model, setModel] = useState(PROVIDER_DEFAULTS.openrouter.model);
   const [temperature, setTemperature] = useState("0.2");
   const [maxTokens, setMaxTokens] = useState("1024");
   const [system, setSystem] = useState("");
@@ -61,9 +61,9 @@ export function LLMConfigTab({ projectId }: { projectId: string }) {
       const raw = localStorage.getItem(lsKey(projectId));
       if (!raw) return;
       const c = JSON.parse(raw);
-      setProvider(c.provider ?? "lovable");
+      setProvider(c.provider ?? "openrouter");
       setApiKey(c.apiKey ?? "");
-      setModel(c.model ?? PROVIDER_DEFAULTS.lovable.model);
+      setModel(c.model ?? PROVIDER_DEFAULTS.openrouter.model);
       setTemperature(c.temperature ?? "0.2");
       setMaxTokens(c.maxTokens ?? "1024");
       setSystem(c.system ?? "");
@@ -92,7 +92,7 @@ export function LLMConfigTab({ projectId }: { projectId: string }) {
         <CardTitle className="text-base">Configuração do modelo</CardTitle>
         <p className="text-xs text-muted-foreground">
           Usado pela aba <strong>Compare Responses</strong> e também pela{" "}
-          <strong>extração</strong> (quando o provider for <em>Lovable AI Gateway</em>).
+          <strong>extração</strong> (quando o provider for <em>OpenRouter</em>).
           Suas credenciais ficam apenas no navegador (localStorage). Não armazenamos no servidor.
         </p>
       </CardHeader>
